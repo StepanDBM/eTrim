@@ -17,6 +17,8 @@ from ET_ui.ET_viewer import ETrimViewer
 
 from ET_core import ET_uv_model
 
+from ET_core.ET_storage import ETrimStorage
+
 
 ETRIM_UI = None
 ETRIM_UI_OBJECT_NAME = "ET_eTrim_UI"
@@ -136,6 +138,12 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
 
         self.load_selection_btn = QtWidgets.QPushButton("Load Selected UVs")
         self.apply_btn = QtWidgets.QPushButton("Apply")
+
+        self.save_layout_btn = QtWidgets.QPushButton("Save .etrim")
+        self.load_layout_btn = QtWidgets.QPushButton("Load .etrim")
+        self.save_scene_layout_btn = QtWidgets.QPushButton("Save To Scene")
+        self.load_scene_layout_btn = QtWidgets.QPushButton("Load From Scene")
+
         self.create_box_btn = QtWidgets.QPushButton("Create Box")
         self.delete_box_btn = QtWidgets.QPushButton("Delete Box")
         self.clear_boxes_btn = QtWidgets.QPushButton("Clear")
@@ -143,6 +151,13 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
 
         toolbar_layout.addWidget(self.load_selection_btn)
         toolbar_layout.addWidget(self.apply_btn)
+
+        toolbar_layout.addWidget(self.save_layout_btn)
+        toolbar_layout.addWidget(self.load_layout_btn)
+        toolbar_layout.addWidget(self.save_scene_layout_btn)
+        toolbar_layout.addWidget(self.load_scene_layout_btn)
+        toolbar_layout.addSpacing(12)
+
         toolbar_layout.addWidget(self.create_box_btn)
         toolbar_layout.addWidget(self.delete_box_btn)
         toolbar_layout.addWidget(self.clear_boxes_btn)
@@ -183,10 +198,18 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         self.viewer = ETrimViewer(self.model)
         main_layout.addWidget(self.viewer, 1)
 
+        self.storage = ETrimStorage(self.model, self.viewer)
+
     def create_connections(self):
         self.load_selection_btn.clicked.connect(self.load_selected_uvs)
         self.uv_select_mode_btn.clicked.connect(self.toggle_uv_select_mode)
         self.apply_btn.clicked.connect(self.apply_preview)
+
+        self.save_layout_btn.clicked.connect(self.save_layout_file)
+        self.load_layout_btn.clicked.connect(self.load_layout_file)
+        self.save_scene_layout_btn.clicked.connect(self.save_layout_to_scene)
+        self.load_scene_layout_btn.clicked.connect(self.load_layout_from_scene)
+
         self.create_box_btn.clicked.connect(self.create_box)
         self.delete_box_btn.clicked.connect(self.delete_box)
         self.clear_boxes_btn.clicked.connect(self.clear_boxes)
@@ -240,6 +263,111 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
             print("[eTrim] Apply complete.")
         else:
             print("[eTrim] Nothing was applied.")
+
+    def sync_ui_from_viewer_state(self):
+        """
+        Sync UI button labels/check states from viewer state.
+
+        Storage applies data to model/viewer.
+        UI owns buttons, so button state sync stays here.
+        """
+
+        uv_enabled = bool(
+            getattr(
+                self.viewer,
+                "uv_selection_enabled",
+                True
+            )
+        )
+
+        self.enable_uv_selection_btn.setChecked(uv_enabled)
+
+        if uv_enabled:
+            self.enable_uv_selection_btn.setText("UV Selection: ON")
+        else:
+            self.enable_uv_selection_btn.setText("UV Selection: OFF")
+
+        box_enabled = bool(
+            getattr(
+                self.viewer,
+                "box_selection_enabled",
+                True
+            )
+        )
+
+        self.enable_box_selection_btn.setChecked(box_enabled)
+
+        if box_enabled:
+            self.enable_box_selection_btn.setText("Box Selection: ON")
+        else:
+            self.enable_box_selection_btn.setText("Box Selection: OFF")
+
+        uv_mode = self.viewer.get_uv_selection_mode()
+
+        if uv_mode == "face":
+            self.uv_select_mode_btn.setChecked(True)
+            self.uv_select_mode_btn.setText("Faces")
+        else:
+            self.uv_select_mode_btn.setChecked(False)
+            self.uv_select_mode_btn.setText("Shells")
+
+    def save_layout_file(self):
+        file_path, selected_filter = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Save eTrim Layout",
+            "",
+            "eTrim Layout (*.etrim)"
+        )
+
+        if not file_path:
+            return
+
+        result = self.storage.save_to_file(file_path)
+
+        if result:
+            print("[eTrim] Save .etrim complete.")
+        else:
+            print("[eTrim] Save .etrim failed.")
+
+    def load_layout_file(self):
+        file_path, selected_filter = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Load eTrim Layout",
+            "",
+            "eTrim Layout (*.etrim)"
+        )
+
+        if not file_path:
+            return
+
+        result = self.storage.load_from_file(file_path)
+
+        if result:
+            self.sync_ui_from_viewer_state()
+            self.refresh_info()
+            print("[eTrim] Load .etrim complete.")
+        else:
+            print("[eTrim] Load .etrim failed.")
+
+    def save_layout_to_scene(self):
+        result = self.storage.save_to_scene()
+
+        if result:
+            print("[eTrim] Save layout to scene complete.")
+        else:
+            print("[eTrim] Save layout to scene failed.")
+
+    def load_layout_from_scene(self):
+        result = self.storage.load_from_scene()
+
+        if result:
+            self.sync_ui_from_viewer_state()
+            self.refresh_info()
+            print("[eTrim] Load layout from scene complete.")
+        else:
+            print("[eTrim] Load layout from scene failed.")
+
+
 
     def create_box(self):
         box = self.model.create_box()
