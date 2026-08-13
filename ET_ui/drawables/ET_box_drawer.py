@@ -5,7 +5,7 @@ try:
 except ImportError:
     from PySide6 import QtCore, QtGui
 
-from ET_ui.ET_drawable_object import EDrawableObjectController
+from ET_ui.drawables.ET_drawable_object import EDrawableObjectController
 
 
 class EBoxDrawer(EDrawableObjectController):

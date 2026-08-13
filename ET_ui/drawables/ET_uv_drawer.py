@@ -5,7 +5,7 @@ try:
 except ImportError:
     from PySide6 import QtCore, QtGui
 
-from ET_ui.ET_drawable_object import EDrawableObjectController
+from ET_ui.drawables.ET_drawable_object import EDrawableObjectController
 
 class EUVDrawer(EDrawableObjectController):
     """
@@ -232,6 +232,184 @@ class EUVDrawer(EDrawableObjectController):
             )
 
             painter.drawEllipse(rect)
+
+    # -----------------------------------------------------
+    # Preview fit / trim operations
+    # -----------------------------------------------------
+
+    def get_active_shell_ref(self):
+        return self.active_shell
+
+
+    def get_uv_pair_bounds(self, uv_pairs):
+        """
+        uv_pairs:
+            [(mesh_data, uv_id), ...]
+
+        Returns:
+            u_min, v_min, u_max, v_max
+        """
+
+        positions = {}
+
+        for index, pair in enumerate(uv_pairs):
+            mesh_data, uv_id = pair
+            positions[index] = self.get_uv_position(mesh_data, uv_id)
+
+        return self.get_uv_bounds_from_positions(positions)
+
+
+    def fit_uv_pairs_to_box(self, uv_pairs, box):
+        """
+        Fit a group of preview UVs into a trim box.
+
+        Current behavior:
+        - stretch fill into the box
+        - viewer preview only
+        - no Maya UVs are modified
+        """
+
+        if not uv_pairs:
+            return False
+
+        src_u_min, src_v_min, src_u_max, src_v_max = self.get_uv_pair_bounds(
+            uv_pairs
+        )
+
+        src_width = src_u_max - src_u_min
+        src_height = src_v_max - src_v_min
+
+        if src_width <= 0.000001 or src_height <= 0.000001:
+            print("[eTrim] Cannot trim UVs. Source UV bounds are too small.")
+            return False
+
+        dst_u_min = box.u_min
+        dst_v_min = box.v_min
+        dst_u_max = box.u_max
+        dst_v_max = box.v_max
+
+        dst_width = dst_u_max - dst_u_min
+        dst_height = dst_v_max - dst_v_min
+
+        if dst_width <= 0.000001 or dst_height <= 0.000001:
+            print("[eTrim] Cannot trim UVs. Target box bounds are too small.")
+            return False
+
+        scale_u = dst_width / src_width
+        scale_v = dst_height / src_height
+
+        for mesh_data, uv_id in uv_pairs:
+            u, v = self.get_uv_position(mesh_data, uv_id)
+
+            normalized_u = (u - src_u_min) / src_width
+            normalized_v = (v - src_v_min) / src_height
+
+            new_u = dst_u_min + normalized_u * dst_width
+            new_v = dst_v_min + normalized_v * dst_height
+
+            mesh_data.preview_uv_positions[uv_id] = (
+                new_u,
+                new_v
+            )
+
+        self.viewer.update()
+        return True
+
+
+    def fit_shell_to_box(self, mesh_data, shell_data, box):
+        """
+        Fit one shell preview into one trim box.
+        """
+
+        if not mesh_data or not shell_data or not box:
+            return False
+
+        if not hasattr(mesh_data, "preview_uv_positions"):
+            mesh_data.preview_uv_positions = dict(mesh_data.uv_positions)
+
+        uv_pairs = [
+            (mesh_data, uv_id)
+            for uv_id in shell_data.uv_ids
+        ]
+
+        result = self.fit_uv_pairs_to_box(
+            uv_pairs,
+            box
+        )
+
+        if result:
+            shell_ref = (mesh_data, shell_data)
+            self.active_shell = shell_ref
+            self.hover_shell = shell_ref
+            self.set_active_object(shell_ref)
+            self.set_hover_object(shell_ref)
+
+        return result
+
+
+    def fit_active_shell_to_box(self, box):
+        """
+        Fit the currently active viewer shell into a trim box.
+        """
+
+        if not self.active_shell:
+            return False
+
+        mesh_data, shell_data = self.active_shell
+
+        return self.fit_shell_to_box(
+            mesh_data,
+            shell_data,
+            box
+        )
+
+
+    def fit_cache_to_box(self, uv_cache, box):
+        """
+        Fit all UVs in a loaded cache into one trim box.
+
+        This is used when the user has Maya faces/components selected.
+        The whole loaded selection is treated as one preview island group.
+        """
+
+        if not uv_cache or not uv_cache.has_data():
+            return False
+
+        if not box:
+            return False
+
+        uv_pairs = []
+
+        for mesh_data in uv_cache.meshes:
+            if not hasattr(mesh_data, "preview_uv_positions"):
+                mesh_data.preview_uv_positions = dict(mesh_data.uv_positions)
+
+            for uv_id in mesh_data.preview_uv_positions.keys():
+                uv_pairs.append(
+                    (mesh_data, uv_id)
+                )
+
+        result = self.fit_uv_pairs_to_box(
+            uv_pairs,
+            box
+        )
+
+        if result:
+            # Make first shell active for visual feedback, if available.
+            for mesh_data in uv_cache.meshes:
+                if mesh_data.shells:
+                    shell_ref = (
+                        mesh_data,
+                        mesh_data.shells[0]
+                    )
+
+                    self.active_shell = shell_ref
+                    self.hover_shell = shell_ref
+                    self.set_active_object(shell_ref)
+                    self.set_hover_object(shell_ref)
+                    break
+
+        return result
 
     # -----------------------------------------------------
     # Hit testing

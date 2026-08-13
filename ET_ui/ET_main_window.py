@@ -135,12 +135,14 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         toolbar_layout.setSpacing(6)
 
         self.load_selection_btn = QtWidgets.QPushButton("Load Selected UVs")
+        self.trim_uvs_btn = QtWidgets.QPushButton("Trim UVs")
         self.create_box_btn = QtWidgets.QPushButton("Create Box")
         self.delete_box_btn = QtWidgets.QPushButton("Delete Box")
         self.clear_boxes_btn = QtWidgets.QPushButton("Clear")
         self.frame_btn = QtWidgets.QPushButton("Frame 0-1")
 
         toolbar_layout.addWidget(self.load_selection_btn)
+        toolbar_layout.addWidget(self.trim_uvs_btn)
         toolbar_layout.addWidget(self.create_box_btn)
         toolbar_layout.addWidget(self.delete_box_btn)
         toolbar_layout.addWidget(self.clear_boxes_btn)
@@ -161,6 +163,7 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
 
     def create_connections(self):
         self.load_selection_btn.clicked.connect(self.load_selected_uvs)
+        self.trim_uvs_btn.clicked.connect(self.trim_uvs)
         self.create_box_btn.clicked.connect(self.create_box)
         self.delete_box_btn.clicked.connect(self.delete_box)
         self.clear_boxes_btn.clicked.connect(self.clear_boxes)
@@ -180,6 +183,76 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         self.refresh_info()
 
         print("[eTrim] UV selection loaded into viewer.")
+
+    def trim_uvs(self):
+        """
+        Preview-fit either selected Maya faces/components or the active viewer UV shell
+        into the active trim box.
+
+        Priority:
+        1. Maya selected faces/components
+        2. Active UV shell in viewer
+
+        This does not apply changes back to Maya yet.
+        It only updates the viewer preview UV positions.
+        """
+
+        active_box = self.model.get_active_box()
+
+        # -----------------------------------------------------
+        # First priority: Maya face/component selection
+        # -----------------------------------------------------
+
+        uv_cache = None
+        has_maya_selection = bool(cmds.ls(sl=True, fl=True) or [])
+
+        if has_maya_selection:
+            try:
+                uv_cache = ET_uv_model.build_cache_from_selection()
+            except Exception as exc:
+                uv_cache = None
+                print("[eTrim] Could not build UV cache from Maya selection:")
+                print(exc)
+
+        if uv_cache and uv_cache.has_data():
+            if not active_box:
+                print("No boxes or faces selected")
+                return
+
+            self.viewer.set_uv_cache(uv_cache)
+
+            if self.viewer.uv_drawer.fit_cache_to_box(
+                uv_cache,
+                active_box
+            ):
+                print("[eTrim] Trimmed selected Maya UVs into box:")
+                print("        box:", active_box.name, active_box.id)
+                self.refresh_info()
+                self.viewer.update()
+                return
+
+        # -----------------------------------------------------
+        # Second priority: active viewer shell
+        # -----------------------------------------------------
+
+        active_shell = None
+
+        if self.viewer.uv_drawer:
+            active_shell = getattr(
+                self.viewer.uv_drawer,
+                "active_shell",
+                None
+            )
+
+        if active_box and active_shell:
+            if self.viewer.uv_drawer.fit_active_shell_to_box(active_box):
+                print("[eTrim] Trimmed active viewer UV shell into box:")
+                print("        box:", active_box.name, active_box.id)
+                self.refresh_info()
+                self.viewer.update()
+                return
+
+        print("No boxes or faces selected")
 
     def create_box(self):
         box = self.model.create_box()

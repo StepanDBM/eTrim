@@ -5,8 +5,8 @@ try:
 except ImportError:
     from PySide6 import QtCore, QtGui, QtWidgets
 
-from ET_ui.ET_uv_drawer import EUVDrawer
-from ET_ui.ET_box_drawer import EBoxDrawer
+from ET_ui.drawables.ET_uv_drawer import EUVDrawer
+from ET_ui.drawables.ET_box_drawer import EBoxDrawer
 
 
 class ETrimViewer(QtWidgets.QWidget):
