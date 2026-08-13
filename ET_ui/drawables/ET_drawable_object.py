@@ -5,6 +5,8 @@ try:
 except ImportError:
     from PySide6 import QtCore, QtWidgets
 
+from ET_ui import ET_style
+
 
 class EDrawableObjectController(object):
     """
@@ -260,6 +262,7 @@ class EDrawableObjectController(object):
         """
 
         menu = QtWidgets.QMenu(self.viewer)
+        menu.setStyleSheet(ET_style.DIALOG_STYLE)
 
         delete_action = menu.addAction("Delete")
         delete_action.triggered.connect(

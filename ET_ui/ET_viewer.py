@@ -7,6 +7,7 @@ except ImportError:
 
 from ET_ui.drawables.ET_uv_drawer import EUVDrawer
 from ET_ui.drawables.ET_box_drawer import EBoxDrawer
+from ET_ui import ET_style
 
 
 class ETrimViewer(QtWidgets.QWidget):
@@ -469,6 +470,7 @@ class ETrimViewer(QtWidgets.QWidget):
 
         dialog = QtWidgets.QDialog(self)
         dialog.setWindowTitle("Create Box Settings")
+        dialog.setStyleSheet(ET_style.DIALOG_STYLE)
 
         layout = QtWidgets.QVBoxLayout(dialog)
         layout.setContentsMargins(10, 10, 10, 10)
@@ -498,8 +500,13 @@ class ETrimViewer(QtWidgets.QWidget):
         button_layout = QtWidgets.QHBoxLayout()
         button_layout.addStretch()
 
-        ok_btn = QtWidgets.QPushButton("OK")
-        cancel_btn = QtWidgets.QPushButton("Cancel")
+        ok_btn = ET_style.create_primary_button("OK",
+            minimum_width=72
+        )
+
+        cancel_btn = ET_style.create_action_button("Cancel",
+            minimum_width=72
+        )
 
         button_layout.addWidget(ok_btn)
         button_layout.addWidget(cancel_btn)
@@ -523,6 +530,7 @@ class ETrimViewer(QtWidgets.QWidget):
         """
 
         menu = QtWidgets.QMenu(self)
+        menu.setStyleSheet(ET_style.DIALOG_STYLE)
 
         create_box_action = menu.addAction("Create Box")
         create_box_action.triggered.connect(

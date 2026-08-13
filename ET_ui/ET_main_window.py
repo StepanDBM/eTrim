@@ -14,6 +14,7 @@ except ImportError:
 
 from ET_core.ET_box_model import get_model
 from ET_ui.ET_viewer import ETrimViewer
+from ET_ui import ET_style
 
 from ET_core import ET_uv_model
 
@@ -135,16 +136,31 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         # -----------------------------------------------------
         # Top toolbar
         # -----------------------------------------------------
-        toolbar_layout = QtWidgets.QHBoxLayout()
-        toolbar_layout.setSpacing(6)
+        toolbar_layout = ET_style.create_toolbar_layout()
 
-        self.load_selection_btn = QtWidgets.QPushButton("Load Selected UVs")
-        self.apply_btn = QtWidgets.QPushButton("Apply")
+        self.load_selection_btn = ET_style.create_primary_button("Load Selected UVs",
+            tooltip="Load current Maya UV selection into eTrim."
+        )
 
-        self.create_box_btn = QtWidgets.QPushButton("Create Box")
-        self.delete_box_btn = QtWidgets.QPushButton("Delete Box")
-        self.clear_boxes_btn = QtWidgets.QPushButton("Clear")
-        self.frame_btn = QtWidgets.QPushButton("Frame 0-1")
+        self.apply_btn = ET_style.create_primary_button("Apply",
+            tooltip="Apply preview UV edits back to Maya."
+        )
+
+        self.create_box_btn = ET_style.create_action_button("Create Box",
+            tooltip="Create a new trim box."
+        )
+
+        self.delete_box_btn = ET_style.create_danger_button("Delete Box",
+            tooltip="Delete the active trim box."
+        )
+
+        self.clear_boxes_btn = ET_style.create_danger_button("Clear",
+            tooltip="Clear all trim boxes."
+        )
+
+        self.frame_btn = ET_style.create_action_button("Frame 0-1",
+            tooltip="Frame the 0-1 UV tile."
+        )
 
         toolbar_layout.addWidget(self.load_selection_btn)
         toolbar_layout.addWidget(self.apply_btn)
@@ -165,20 +181,26 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         # -----------------------------------------------------
         # Tool / storage toolbar
         # -----------------------------------------------------
-        selection_toolbar_layout = QtWidgets.QHBoxLayout()
-        selection_toolbar_layout.setSpacing(6)
+        selection_toolbar_layout = ET_style.create_toolbar_layout()
 
         # Left side: interaction toggles
-        self.enable_uv_selection_btn = QtWidgets.QPushButton("UV Selection: ON")
-        self.enable_uv_selection_btn.setCheckable(True)
-        self.enable_uv_selection_btn.setChecked(True)
+        self.enable_uv_selection_btn = ET_style.create_toggle_button("UV Selection: ON",
+            checked=True,
+            tooltip="Enable or disable UV picking and UV interaction.",
+            minimum_width=120
+        )
 
-        self.enable_box_selection_btn = QtWidgets.QPushButton("Box Selection: ON")
-        self.enable_box_selection_btn.setCheckable(True)
-        self.enable_box_selection_btn.setChecked(True)
+        self.enable_box_selection_btn = ET_style.create_toggle_button("Box Selection: ON",
+            checked=True,
+            tooltip="Enable or disable box picking and box interaction.",
+            minimum_width=120
+        )
 
-        self.uv_select_mode_btn = QtWidgets.QPushButton("Shells")
-        self.uv_select_mode_btn.setCheckable(True)
+        self.uv_select_mode_btn = ET_style.create_toggle_button("Shells",
+            checked=False,
+            tooltip="Toggle between shell selection and face selection.",
+            minimum_width=88
+        )
 
         selection_toolbar_layout.addWidget(self.enable_uv_selection_btn)
         selection_toolbar_layout.addWidget(self.enable_box_selection_btn)
@@ -188,10 +210,25 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         selection_toolbar_layout.addStretch()
 
         # Right side: storage buttons
-        self.save_layout_btn = QtWidgets.QPushButton("Save .etrim")
-        self.load_layout_btn = QtWidgets.QPushButton("Load .etrim")
-        self.save_scene_layout_btn = QtWidgets.QPushButton("Save To Scene")
-        self.load_scene_layout_btn = QtWidgets.QPushButton("Load From Scene")
+        self.save_layout_btn = ET_style.create_action_button("Save .etrim",
+            tooltip="Save current eTrim layout to a .etrim file.",
+            minimum_width=92
+        )
+
+        self.load_layout_btn = ET_style.create_action_button("Load .etrim",
+            tooltip="Load an eTrim layout from a .etrim file.",
+            minimum_width=92
+        )
+
+        self.save_scene_layout_btn = ET_style.create_action_button("Save To Scene",
+            tooltip="Save current eTrim layout into the Maya scene.",
+            minimum_width=104
+        )
+
+        self.load_scene_layout_btn = ET_style.create_action_button("Load From Scene",
+            tooltip="Load eTrim layout from the Maya scene.",
+            minimum_width=112
+        )
 
         selection_toolbar_layout.addWidget(self.save_layout_btn)
         selection_toolbar_layout.addWidget(self.load_layout_btn)
