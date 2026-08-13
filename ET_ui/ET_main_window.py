@@ -1,6 +1,8 @@
 # ET_ui/ET_main_window.py
 
 from maya import OpenMayaUI
+import maya.cmds as cmds
+from maya.app.general.mayaMixin import MayaQWidgetDockableMixin
 
 try:
     from shiboken2 import wrapInstance
@@ -18,6 +20,7 @@ from ET_core import ET_uv_model
 
 ETRIM_UI = None
 ETRIM_UI_OBJECT_NAME = "ET_eTrim_UI"
+ETRIM_WORKSPACE_CONTROL = ETRIM_UI_OBJECT_NAME + "WorkspaceControl"
 
 
 def maya_main_window():
@@ -28,8 +31,68 @@ def maya_main_window():
 
     return wrapInstance(int(ptr), QtWidgets.QWidget)
 
+def delete_workspace_control():
+    if cmds.workspaceControl(
+        ETRIM_WORKSPACE_CONTROL,
+        q=True,
+        exists=True
+    ):
+        cmds.workspaceControl(
+            ETRIM_WORKSPACE_CONTROL,
+            e=True,
+            close=True
+        )
 
-class ETrimMainWindow(QtWidgets.QDialog):
+        cmds.deleteUI(
+            ETRIM_WORKSPACE_CONTROL,
+            control=True
+        )
+
+def workspace_control_exists(control_name):
+    try:
+        return cmds.workspaceControl(
+            control_name,
+            q=True,
+            exists=True
+        )
+    except Exception:
+        return False
+
+def find_uv_dock_target():
+    """
+    Try common UV Toolkit workspace control names.
+
+    Maya versions can differ, so this is intentionally conservative.
+    If none are found, eTrim will simply show dockable/floating.
+    """
+
+    candidates = [
+        "UVToolkitWorkspaceControl",
+        "UVToolkit",
+        "polyTexturePlacementPanel1WindowWorkspaceControl",
+        "UVEditorWorkspaceControl"
+    ]
+
+    for candidate in candidates:
+        if workspace_control_exists(candidate):
+            return candidate
+
+    return None
+def open_uv_editor():
+    """
+    Open Maya's native UV Editor.
+
+    Uses MEL because TextureViewWindow is the stable native command.
+    """
+
+    try:
+        cmds.TextureViewWindow()
+    except Exception as exc:
+        print("[eTrim] Failed to open UV Editor:")
+        print(exc)
+
+
+class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
 
     WINDOW_TITLE = "eTrim SDBM"
 
@@ -40,7 +103,6 @@ class ETrimMainWindow(QtWidgets.QDialog):
         self.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
 
         self.model = get_model()
-
         self.setWindowTitle(self.WINDOW_TITLE)
 
         self.setMinimumSize(700, 500)
@@ -187,6 +249,8 @@ class ETrimMainWindow(QtWidgets.QDialog):
 def show_ui():
     global ETRIM_UI
 
+    open_uv_editor()
+
     if ETRIM_UI is not None:
         try:
             ETRIM_UI.close()
@@ -194,8 +258,55 @@ def show_ui():
         except Exception:
             pass
 
+    delete_workspace_control()
+
     ETRIM_UI = ETrimMainWindow(parent=maya_main_window())
-    ETRIM_UI.show()
+
+    dock_target = find_uv_dock_target()
+
+    if dock_target:
+        print("[eTrim] Dock target found:", dock_target)
+
+        ETRIM_UI.show(
+            dockable=True,
+            floating=False,
+            area="right"
+        )
+
+        try:
+            cmds.workspaceControl(
+                ETRIM_WORKSPACE_CONTROL,
+                e=True,
+                dockToControl=[
+                    dock_target,
+                    "right"
+                ]
+            )
+        except Exception as exc:
+            print("[eTrim] Could not dock to UV target. Falling back.")
+            print(exc)
+
+    else:
+        print("[eTrim] No UV dock target found. Showing floating dockable UI.")
+
+        ETRIM_UI.show(
+            dockable=True,
+            floating=True,
+            area="right"
+        )
+
+    try:
+        cmds.workspaceControl(
+            ETRIM_WORKSPACE_CONTROL,
+            e=True,
+            label=ETrimMainWindow.WINDOW_TITLE,
+            widthProperty="preferred",
+            initialWidth=700,
+            minimumWidth=450
+        )
+    except Exception:
+        pass
+
     ETRIM_UI.raise_()
     ETRIM_UI.activateWindow()
 
