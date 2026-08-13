@@ -64,6 +64,11 @@ class ETrimViewer(QtWidgets.QWidget):
         self.create_box_width_percent = 20.0
         self.create_box_height_percent = 20.0
 
+        self.backdrop_image_enabled = False
+        self.backdrop_image_path = None
+        self.backdrop_image = QtGui.QImage()
+        self.backdrop_opacity = 1.0
+
         self.is_rect_selecting = False
         self.rect_select_start = None
         self.rect_select_current = None
@@ -141,7 +146,55 @@ class ETrimViewer(QtWidgets.QWidget):
 
         self.update()
 
+    def set_backdrop_image_path(self, image_path):
+        """
+        Set viewer backdrop image from file path.
+        """
 
+        if not image_path:
+            self.backdrop_image_path = None
+            self.backdrop_image = QtGui.QImage()
+            self.backdrop_image_enabled = False
+            self.update()
+            return False
+
+        image = QtGui.QImage(image_path)
+
+        if image.isNull():
+            print("[eTrim] Could not load backdrop image:", image_path)
+            self.backdrop_image_path = None
+            self.backdrop_image = QtGui.QImage()
+            self.backdrop_image_enabled = False
+            self.update()
+            return False
+
+        self.backdrop_image_path = image_path
+        self.backdrop_image = image
+        self.backdrop_image_enabled = True
+        self.update()
+
+        print("[eTrim] Backdrop image loaded:")
+        print("    path:", image_path)
+
+        return True
+
+
+    def set_backdrop_enabled(self, enabled):
+        self.backdrop_image_enabled = bool(enabled)
+        self.update()
+
+
+    def set_backdrop_opacity_percent(self, value):
+        value = max(
+            0.0,
+            min(
+                100.0,
+                float(value)
+            )
+        )
+
+        self.backdrop_opacity = value / 100.0
+        self.update()
     # -----------------------------------------------------
     # Selection
     # -----------------------------------------------------
@@ -794,6 +847,7 @@ class ETrimViewer(QtWidgets.QWidget):
         painter.fillRect(self.rect(), self.background_color)
 
         self.draw_tile(painter)
+        self.draw_backdrop_image(painter)
         self.draw_grid(painter)
         self.draw_tile_border(painter)
 
@@ -810,6 +864,34 @@ class ETrimViewer(QtWidgets.QWidget):
         self.draw_hud(painter)
 
         painter.end()
+
+    def draw_backdrop_image(self, painter):
+        """
+        Draw backdrop image inside the 0-1 UV tile.
+        """
+
+        if not self.backdrop_image_enabled:
+            return
+
+        if self.backdrop_image.isNull():
+            return
+
+        rect = self.get_tile_rect()
+
+        if rect.isNull():
+            return
+
+        painter.save()
+        painter.setClipRect(rect)
+        painter.setOpacity(self.backdrop_opacity)
+
+        painter.drawImage(
+            rect,
+            self.backdrop_image
+        )
+
+        painter.restore()
+
 
     def draw_tile(self, painter):
         rect = self.get_tile_rect()

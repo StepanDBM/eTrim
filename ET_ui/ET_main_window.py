@@ -18,6 +18,8 @@ from ET_ui import ET_style
 
 from ET_core import ET_uv_model
 
+from ET_core import ET_texture_finder
+
 from ET_core.ET_storage import ETrimStorage
 
 
@@ -162,6 +164,21 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
             tooltip="Frame the 0-1 UV tile."
         )
 
+        self.backdrop_image_btn = ET_style.create_toggle_button("Backdrop Image",
+            checked=False,
+            tooltip="Show or hide base color texture behind the UVs.",
+            minimum_width=120
+        )
+
+        self.backdrop_opacity_spin = QtWidgets.QSpinBox()
+        self.backdrop_opacity_spin.setRange(0, 100)
+        self.backdrop_opacity_spin.setValue(15)
+        self.backdrop_opacity_spin.setSuffix(" %")
+        self.backdrop_opacity_spin.setMinimumWidth(72)
+        self.backdrop_opacity_spin.setMinimumHeight(24)
+        self.backdrop_opacity_spin.setStyleSheet(ET_style.DIALOG_STYLE)
+        self.backdrop_opacity_spin.setToolTip("Backdrop image opacity.")
+
         toolbar_layout.addWidget(self.load_selection_btn)
         toolbar_layout.addWidget(self.apply_btn)
 
@@ -174,7 +191,12 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         toolbar_layout.addSpacing(12)
 
         toolbar_layout.addWidget(self.frame_btn)
+
+        # Push backdrop controls to the right side of the top toolbar.
         toolbar_layout.addStretch()
+
+        toolbar_layout.addWidget(self.backdrop_image_btn)
+        toolbar_layout.addWidget(self.backdrop_opacity_spin)
 
         main_layout.addLayout(toolbar_layout)
 
@@ -258,6 +280,8 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
     def create_connections(self):
         self.load_selection_btn.clicked.connect(self.load_selected_uvs)
         self.uv_select_mode_btn.clicked.connect(self.toggle_uv_select_mode)
+        self.backdrop_image_btn.clicked.connect(self.toggle_backdrop_image)
+        self.backdrop_opacity_spin.valueChanged.connect(self.set_backdrop_opacity)
         self.apply_btn.clicked.connect(self.apply_preview)
 
         self.save_layout_btn.clicked.connect(self.save_layout_file)
@@ -279,14 +303,68 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
     # -----------------------------------------------------
     # Actions
     # -----------------------------------------------------
+    def try_load_backdrop_image_from_cache(self, uv_cache):
+        """
+        Try to find and load base color texture from the loaded UV cache.
+        """
+
+        texture_path = ET_texture_finder.find_base_color_texture_from_uv_cache(
+            uv_cache
+        )
+
+        if not texture_path:
+            print("[eTrim] No base color texture found for backdrop.")
+            self.backdrop_image_btn.setChecked(False)
+            self.viewer.set_backdrop_enabled(False)
+            return False
+
+        result = self.viewer.set_backdrop_image_path(
+            texture_path
+        )
+
+        if result:
+            self.backdrop_image_btn.setChecked(True)
+            self.backdrop_image_btn.setText("Backdrop Image")
+            self.viewer.set_backdrop_opacity_percent(100)
+
+        return result
+
+
+    def toggle_backdrop_image(self):
+        """
+        Toggle backdrop image display.
+
+        If turning on and no image is loaded yet, try to discover one from uv_cache.
+        """
+
+        enabled = self.backdrop_image_btn.isChecked()
+
+        if enabled:
+            if self.viewer.backdrop_image.isNull():
+                result = self.try_load_backdrop_image_from_cache(
+                    self.viewer.uv_cache
+                )
+
+                if not result:
+                    self.backdrop_image_btn.setChecked(False)
+                    self.viewer.set_backdrop_enabled(False)
+                    return
+
+            self.viewer.set_backdrop_enabled(True)
+        else:
+            self.viewer.set_backdrop_enabled(False)
+
+
+    def set_backdrop_opacity(self, value):
+        self.viewer.set_backdrop_opacity_percent(value)
+
     def load_selected_uvs(self):
         uv_cache = ET_uv_model.build_cache_from_selection()
-
         self.viewer.set_uv_cache(uv_cache)
-
+        self.try_load_backdrop_image_from_cache(uv_cache)
         self.refresh_info()
-
         print("[eTrim] UV selection loaded into viewer.")
+
     def toggle_uv_select_mode(self):
         """
         Toggle UV interaction between shell selection and face selection.

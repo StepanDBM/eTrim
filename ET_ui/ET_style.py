@@ -180,6 +180,18 @@ QMenu::item:selected {
     background-color: #527966;
     color: #ffffff;
 }
+
+QSpinBox {
+    background-color: #2f2f2f;
+    color: #dddddd;
+    border: 1px solid #3a3a3a;
+    border-radius: 3px;
+    padding: 2px 4px;
+}
+
+QSpinBox:hover {
+    border: 1px solid #5fad88;
+}
 """
 
 
