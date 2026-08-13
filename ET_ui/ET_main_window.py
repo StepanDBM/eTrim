@@ -135,6 +135,8 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         toolbar_layout.setSpacing(6)
 
         self.load_selection_btn = QtWidgets.QPushButton("Load Selected UVs")
+        self.uv_select_mode_btn = QtWidgets.QPushButton("Shells")
+        self.uv_select_mode_btn.setCheckable(True)
         self.trim_uvs_btn = QtWidgets.QPushButton("Trim UVs")
         self.create_box_btn = QtWidgets.QPushButton("Create Box")
         self.delete_box_btn = QtWidgets.QPushButton("Delete Box")
@@ -142,6 +144,7 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         self.frame_btn = QtWidgets.QPushButton("Frame 0-1")
 
         toolbar_layout.addWidget(self.load_selection_btn)
+        toolbar_layout.addWidget(self.uv_select_mode_btn)
         toolbar_layout.addWidget(self.trim_uvs_btn)
         toolbar_layout.addWidget(self.create_box_btn)
         toolbar_layout.addWidget(self.delete_box_btn)
@@ -163,6 +166,7 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
 
     def create_connections(self):
         self.load_selection_btn.clicked.connect(self.load_selected_uvs)
+        self.uv_select_mode_btn.clicked.connect(self.toggle_uv_select_mode)
         self.trim_uvs_btn.clicked.connect(self.trim_uvs)
         self.create_box_btn.clicked.connect(self.create_box)
         self.delete_box_btn.clicked.connect(self.delete_box)
@@ -183,6 +187,19 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         self.refresh_info()
 
         print("[eTrim] UV selection loaded into viewer.")
+    def toggle_uv_select_mode(self):
+        """
+        Toggle UV interaction between shell selection and face selection.
+        """
+
+        if self.uv_select_mode_btn.isChecked():
+            self.uv_select_mode_btn.setText("Faces")
+            self.viewer.uv_drawer.set_selection_mode("face")
+        else:
+            self.uv_select_mode_btn.setText("Shells")
+            self.viewer.uv_drawer.set_selection_mode("shell")
+
+        self.viewer.update()
 
     def trim_uvs(self):
         """

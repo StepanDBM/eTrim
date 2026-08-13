@@ -48,12 +48,18 @@ class EUVDrawer(EDrawableObjectController):
         self.hover_vertex_radius = 2.6
         self.active_vertex_radius = 3.0
 
+        self.selection_mode = "shell"
+
         self.hover_shell = None
         self.active_shell = None
 
-        self.is_dragging_shell = False
-        self.drag_start_positions = None
+        self.hover_face = None
+        self.active_face = None
 
+        self.is_dragging_shell = False
+        self.is_dragging_face = False
+
+        self.drag_start_positions = None
         self.drag_start_shell_bounds = None
 
         self.shell_hit_pixel_distance = 8.0
@@ -68,6 +74,31 @@ class EUVDrawer(EDrawableObjectController):
     def has_cache(self):
         cache = self.get_cache()
         return bool(cache and cache.has_data())
+
+    def set_selection_mode(self, mode):
+        """
+        Set UV selection behavior.
+
+        mode:
+            "shell"
+            "face"
+        """
+
+        if mode not in ("shell", "face"):
+            return
+
+        self.selection_mode = mode
+
+        self.hover_shell = None
+        self.active_shell = None
+        self.hover_face = None
+        self.active_face = None
+
+        self.clear_hover_object()
+        self.clear_active_object()
+
+        self.viewer.setCursor(QtCore.Qt.ArrowCursor)
+        self.viewer.update()
 
     # -----------------------------------------------------
     # UV positions
@@ -108,6 +139,52 @@ class EUVDrawer(EDrawableObjectController):
             ref_shell_data is shell_data
         )
 
+    def drawable_key_for_face(self, mesh_data, face_index):
+        return (
+            "uv_face",
+            mesh_data.mesh_name,
+            mesh_data.uv_set,
+            face_index
+        )
+
+
+    def face_ref_matches(self, face_ref, mesh_data, face_index):
+        if not face_ref:
+            return False
+
+        ref_mesh_data, ref_face_index, ref_face_uv_ids = face_ref
+
+        return (
+            ref_mesh_data is mesh_data and
+            ref_face_index == face_index
+        )
+
+
+    def get_face_index(self, mesh_data, face_uv_ids):
+        """
+        Return index of a face list inside mesh_data.faces.
+        """
+
+        for index, test_face_uv_ids in enumerate(mesh_data.faces):
+            if test_face_uv_ids is face_uv_ids:
+                return index
+
+            if test_face_uv_ids == face_uv_ids:
+                return index
+
+        return -1
+
+
+    def uv_polygon_for_face(self, mesh_data, face_uv_ids):
+        polygon = QtGui.QPolygonF()
+
+        for uv_id in face_uv_ids:
+            polygon.append(
+                self.uv_point_to_screen(mesh_data, uv_id)
+            )
+
+        return polygon
+
     # -----------------------------------------------------
     # Drawing
     # -----------------------------------------------------
@@ -127,10 +204,20 @@ class EUVDrawer(EDrawableObjectController):
                     shell_data
                 )
 
-                is_active = self.shell_matches(
-                    self.active_shell,
-                    mesh_data,
-                    shell_data
+                is_selected = self.viewer.is_drawable_selected(
+                    self.drawable_key_for_shell(
+                        mesh_data,
+                        shell_data
+                    )
+                )
+
+                is_active = (
+                    self.shell_matches(
+                        self.active_shell,
+                        mesh_data,
+                        shell_data
+                    ) or
+                    is_selected
                 )
 
                 if self.draw_faces_enabled:
@@ -161,23 +248,56 @@ class EUVDrawer(EDrawableObjectController):
                     )
 
     def draw_shell_faces(self, painter, mesh_data, shell_data, is_hovered, is_active):
-        if is_active:
-            color = self.active_face_color
-        elif is_hovered:
-            color = self.hover_face_color
-        else:
-            color = self.face_color
-
         painter.setPen(QtCore.Qt.NoPen)
-        painter.setBrush(QtGui.QBrush(color))
 
         for face_uv_ids in shell_data.faces:
-            polygon = QtGui.QPolygonF()
+            face_index = self.get_face_index(
+                mesh_data,
+                face_uv_ids
+            )
 
-            for uv_id in face_uv_ids:
-                polygon.append(
-                    self.uv_point_to_screen(mesh_data, uv_id)
+            is_face_hovered = self.face_ref_matches(
+                self.hover_face,
+                mesh_data,
+                face_index
+            )
+
+            is_face_active = self.face_ref_matches(
+                self.active_face,
+                mesh_data,
+                face_index
+            )
+
+            is_face_selected = self.viewer.is_drawable_selected(
+                self.drawable_key_for_face(
+                    mesh_data,
+                    face_index
                 )
+            )
+
+            if self.selection_mode == "face" and (
+                is_face_hovered or
+                is_face_active or
+                is_face_selected
+            ):
+                if is_face_active or is_face_selected:
+                    color = self.active_face_color
+                else:
+                    color = self.hover_face_color
+            else:
+                if is_active:
+                    color = self.active_face_color
+                elif is_hovered:
+                    color = self.hover_face_color
+                else:
+                    color = self.face_color
+
+            painter.setBrush(QtGui.QBrush(color))
+
+            polygon = self.uv_polygon_for_face(
+                mesh_data,
+                face_uv_ids
+            )
 
             if not polygon.isEmpty():
                 painter.drawPolygon(polygon)
@@ -363,6 +483,31 @@ class EUVDrawer(EDrawableObjectController):
             box
         )
 
+    def fit_selected_faces_to_box(self, box):
+        """
+        Fit currently selected UV faces into one trim box.
+
+        Uses viewer.selected_drawables.
+        Preview only.
+        """
+
+        if not box:
+            return False
+
+        uv_pairs = self.get_uv_pairs_from_selected_faces()
+
+        if not uv_pairs:
+            return False
+
+        result = self.fit_uv_pairs_to_box(
+            uv_pairs,
+            box
+        )
+
+        if result:
+            print("[eTrim] Fit selected UV faces into box:", box.name)
+
+        return result
 
     def fit_cache_to_box(self, uv_cache, box):
         """
@@ -412,6 +557,157 @@ class EUVDrawer(EDrawableObjectController):
         return result
 
     # -----------------------------------------------------
+    # Context menu
+    # -----------------------------------------------------
+    def drawable_key_for_shell(self, mesh_data, shell_data):
+        return (
+            "uv_shell",
+            mesh_data.mesh_name,
+            mesh_data.uv_set,
+            shell_data.shell_id
+        )
+    def build_context_menu(self, shell_ref):
+        menu = super(EUVDrawer, self).build_context_menu(shell_ref)
+
+        menu.addSeparator()
+
+        fit_inside_selected_box_action = menu.addAction("Fit Inside Selected Box")
+        fit_inside_selected_box_action.triggered.connect(
+            lambda: self.fit_shell_inside_selected_box(shell_ref)
+        )
+
+        return menu
+
+
+    def delete_drawable(self, shell_ref):
+        """
+        For now, do not delete UV data from cache.
+
+        This only clears the active shell selection.
+        Real UV deletion/removal can be defined later.
+        """
+
+        print("[eTrim] Delete UV shell requested. Not wired yet:", shell_ref)
+
+        if shell_ref == self.active_shell:
+            self.active_shell = None
+
+        if shell_ref == self.hover_shell:
+            self.hover_shell = None
+
+        self.clear_active_object()
+        self.clear_hover_object()
+
+        if shell_ref:
+            mesh_data, shell_data = shell_ref
+            self.viewer.deselect_drawable_key(
+                self.drawable_key_for_shell(
+                    mesh_data=mesh_data,
+                    shell_data=shell_data
+                    )
+                )
+
+        self.viewer.update()
+
+
+    def fit_shell_inside_selected_box(self, shell_ref):
+        if not shell_ref:
+            return
+
+        box = self.viewer.model.get_active_box()
+
+        if not box:
+            print("[eTrim] No active box selected.")
+            return
+
+        mesh_data, shell_data = shell_ref
+
+        result = self.fit_shell_to_box(
+            mesh_data,
+            shell_data,
+            box
+        )
+
+        if result:
+            print("[eTrim] Fit shell inside selected box:", box.name)
+
+
+    def select_faces_in_rect(self, rect, additive=False):
+        """
+        Select UV faces whose screen-space polygon bounds intersect the rectangle.
+
+        Current behavior:
+        - face selection mode only
+        - selects faces by polygon bounding rect overlap
+        - viewer selection list owns the selected keys
+        """
+
+        if not self.has_cache():
+            return False
+
+        if rect.isNull() or rect.width() < 2.0 or rect.height() < 2.0:
+            if not additive:
+                self.viewer.clear_drawable_selection()
+                self.active_face = None
+                self.hover_face = None
+                self.viewer.update()
+
+            return False
+
+        if not additive:
+            self.viewer.clear_drawable_selection()
+
+        selected_count = 0
+        last_face_ref = None
+
+        cache = self.get_cache()
+
+        for mesh_data in cache.meshes:
+            for face_index, face_uv_ids in enumerate(mesh_data.faces):
+                polygon = self.uv_polygon_for_face(
+                    mesh_data,
+                    face_uv_ids
+                )
+
+                if polygon.isEmpty():
+                    continue
+
+                if not polygon.boundingRect().intersects(rect):
+                    continue
+
+                drawable_key = self.drawable_key_for_face(
+                    mesh_data,
+                    face_index
+                )
+
+                self.viewer.select_drawable(
+                    drawable_key,
+                    clear_previous=False
+                )
+
+                last_face_ref = (
+                    mesh_data,
+                    face_index,
+                    face_uv_ids
+                )
+
+                selected_count += 1
+
+        if last_face_ref:
+            self.active_face = last_face_ref
+            self.hover_face = last_face_ref
+            self.active_shell = None
+            self.hover_shell = None
+
+            self.set_active_object(last_face_ref)
+            self.set_hover_object(last_face_ref)
+
+        print("[eTrim] Rect-selected UV faces:", selected_count)
+
+        self.viewer.update()
+        return selected_count > 0
+
+    # -----------------------------------------------------
     # Hit testing
     # -----------------------------------------------------
 
@@ -448,6 +744,34 @@ class EUVDrawer(EDrawableObjectController):
 
         return None, None
 
+    def hit_test_face(self, pos):
+        """
+        Return:
+            (mesh_data, face_index, face_uv_ids) or (None, None, None)
+
+        Face mode uses polygon hit testing.
+        """
+
+        if not self.has_cache():
+            return None, None, None
+
+        cache = self.get_cache()
+
+        for mesh_data in reversed(cache.meshes):
+            for face_index in reversed(range(len(mesh_data.faces))):
+                face_uv_ids = mesh_data.faces[face_index]
+                polygon = self.uv_polygon_for_face(
+                    mesh_data,
+                    face_uv_ids
+                )
+
+                if polygon.containsPoint(
+                    QtCore.QPointF(pos),
+                    QtCore.Qt.OddEvenFill
+                ):
+                    return mesh_data, face_index, face_uv_ids
+
+        return None, None, None
     # -----------------------------------------------------
     # Drag shell
     # -----------------------------------------------------
@@ -527,19 +851,240 @@ class EUVDrawer(EDrawableObjectController):
 
         self.viewer.update()
 
+    def get_selected_face_keys(self):
+        """
+        Return all selected drawable keys that represent UV faces.
+        """
+
+        selected = []
+
+        for key in self.viewer.selected_drawables:
+            if not key:
+                continue
+
+            if key[0] == "uv_face":
+                selected.append(key)
+
+        return selected
+
+    def get_face_from_drawable_key(self, drawable_key):
+        """
+        Convert a viewer drawable key back into:
+            mesh_data, face_index, face_uv_ids
+        """
+
+        if not drawable_key:
+            return None, None, None
+
+        if drawable_key[0] != "uv_face":
+            return None, None, None
+
+        _, mesh_name, uv_set, face_index = drawable_key
+
+        if not self.has_cache():
+            return None, None, None
+
+        cache = self.get_cache()
+
+        for mesh_data in cache.meshes:
+            if mesh_data.mesh_name != mesh_name:
+                continue
+
+            if mesh_data.uv_set != uv_set:
+                continue
+
+            if face_index < 0:
+                return None, None, None
+
+            if face_index >= len(mesh_data.faces):
+                return None, None, None
+
+            return (
+                mesh_data,
+                face_index,
+                mesh_data.faces[face_index]
+            )
+
+        return None, None, None
+
+
+    def get_uv_pairs_from_selected_faces(self):
+        """
+        Return unique UV pairs from all selected UV faces.
+
+        Returns:
+            [(mesh_data, uv_id), ...]
+        """
+
+        selected_keys = self.get_selected_face_keys()
+
+        uv_pairs = []
+        seen = set()
+
+        for key in selected_keys:
+            mesh_data, face_index, face_uv_ids = self.get_face_from_drawable_key(key)
+
+            if not mesh_data or not face_uv_ids:
+                continue
+
+            for uv_id in face_uv_ids:
+                pair_key = (
+                    id(mesh_data),
+                    uv_id
+                )
+
+                if pair_key in seen:
+                    continue
+
+                seen.add(pair_key)
+                uv_pairs.append(
+                    (
+                        mesh_data,
+                        uv_id
+                    )
+                )
+
+        return uv_pairs
+
+    def begin_drag_face(self, mesh_data, face_index, face_uv_ids, pos):
+        if not hasattr(mesh_data, "preview_uv_positions"):
+            mesh_data.preview_uv_positions = dict(mesh_data.uv_positions)
+
+        face_key = self.drawable_key_for_face(
+            mesh_data,
+            face_index
+        )
+
+        face_ref = (
+            mesh_data,
+            face_index,
+            face_uv_ids
+        )
+
+        self.is_dragging_face = True
+        self.active_face = face_ref
+        self.hover_face = face_ref
+
+        self.set_active_object(face_ref)
+        self.set_hover_object(face_ref)
+
+        self.begin_drag_object(
+            face_ref,
+            pos
+        )
+
+        self.drag_start_positions = {}
+
+        # If the clicked face is part of the current selection,
+        # drag all selected UV faces together.
+        if self.viewer.is_drawable_selected(face_key):
+            uv_pairs = self.get_uv_pairs_from_selected_faces()
+        else:
+            uv_pairs = [
+                (
+                    mesh_data,
+                    uv_id
+                )
+                for uv_id in face_uv_ids
+            ]
+
+        for pair_mesh_data, uv_id in uv_pairs:
+            if not hasattr(pair_mesh_data, "preview_uv_positions"):
+                pair_mesh_data.preview_uv_positions = dict(pair_mesh_data.uv_positions)
+
+            pair_key = (
+                id(pair_mesh_data),
+                uv_id
+            )
+
+            self.drag_start_positions[pair_key] = (
+                pair_mesh_data,
+                uv_id,
+                pair_mesh_data.preview_uv_positions[uv_id]
+            )
+
+        # Bounds need only the UV positions, so convert the drag data.
+        bounds_positions = {}
+
+        for index, drag_data in enumerate(self.drag_start_positions.values()):
+            pair_mesh_data, uv_id, start_pos = drag_data
+            bounds_positions[index] = start_pos
+
+        self.drag_start_shell_bounds = self.get_uv_bounds_from_positions(
+            bounds_positions
+        )
+
+        self.viewer.setCursor(QtCore.Qt.SizeAllCursor)
+        self.viewer.update()
+
+
+    def update_drag_face(self, pos):
+        if not self.is_dragging_face:
+            return
+
+        if not self.active_face:
+            return
+
+        du, dv = self.get_drag_delta_uv(pos)
+
+        if self.drag_start_shell_bounds:
+            u_min, v_min, u_max, v_max = self.drag_start_shell_bounds
+
+            du, dv = self.clamp_uv_delta_to_tile(
+                u_min,
+                v_min,
+                u_max,
+                v_max,
+                du,
+                dv
+            )
+
+        for drag_data in self.drag_start_positions.values():
+            mesh_data, uv_id, start_pos = drag_data
+            original_u, original_v = start_pos
+
+            mesh_data.preview_uv_positions[uv_id] = (
+                original_u + du,
+                original_v + dv
+            )
+
+        self.viewer.update()
+
+
+
+    def end_drag_face(self):
+        if not self.is_dragging_face:
+            return
+
+        self.is_dragging_face = False
+        self.drag_start_positions = None
+        self.drag_start_shell_bounds = None
+
+        self.end_drag_object()
+
+        if self.hover_face:
+            self.viewer.setCursor(QtCore.Qt.SizeAllCursor)
+        else:
+            self.viewer.setCursor(QtCore.Qt.ArrowCursor)
+
+        self.viewer.update()
+
     # -----------------------------------------------------
     # Mouse events
     # -----------------------------------------------------
     def deselect(self):
         """
-        Clear UV shell selection and hover state.
+        Clear UV shell/face selection and hover state.
         """
 
-        if self.is_dragging_shell:
+        if self.is_dragging_shell or self.is_dragging_face:
             return
 
         self.hover_shell = None
         self.active_shell = None
+
+        self.hover_face = None
+        self.active_face = None
 
         self.clear_hover_object()
         self.clear_active_object()
@@ -554,6 +1099,36 @@ class EUVDrawer(EDrawableObjectController):
             self.update_drag_shell(pos)
             return True
 
+        if self.is_dragging_face:
+            self.update_drag_face(pos)
+            return True
+
+        if self.selection_mode == "face":
+            mesh_data, face_index, face_uv_ids = self.hit_test_face(pos)
+
+            if mesh_data and face_uv_ids:
+                new_hover = (
+                    mesh_data,
+                    face_index,
+                    face_uv_ids
+                )
+            else:
+                new_hover = None
+
+            if new_hover != self.hover_face:
+                self.hover_face = new_hover
+                self.set_hover_object(new_hover)
+
+                if self.hover_face:
+                    self.viewer.setCursor(QtCore.Qt.SizeAllCursor)
+                else:
+                    self.viewer.setCursor(QtCore.Qt.ArrowCursor)
+
+                self.viewer.update()
+
+            return False
+
+        # Shell mode.
         mesh_data, shell_data = self.hit_test_shell(pos)
 
         if mesh_data and shell_data:
@@ -572,19 +1147,111 @@ class EUVDrawer(EDrawableObjectController):
 
             self.viewer.update()
 
-        # Return False for pure hover so other systems can still work if needed.
         return False
 
     def mouse_press_event(self, event):
-        if event.button() != QtCore.Qt.LeftButton:
+        if event.button() not in (
+            QtCore.Qt.LeftButton,
+            QtCore.Qt.RightButton
+        ):
             return False
 
         pos = event.pos()
 
+        if self.selection_mode == "face":
+            mesh_data, face_index, face_uv_ids = self.hit_test_face(pos)
+
+            if not mesh_data or not face_uv_ids:
+                return False
+
+            face_ref = (
+                mesh_data,
+                face_index,
+                face_uv_ids
+            )
+
+            self.active_face = face_ref
+            self.hover_face = face_ref
+
+            self.active_shell = None
+            self.hover_shell = None
+
+            self.set_active_object(face_ref)
+            self.set_hover_object(face_ref)
+
+            additive = bool(
+                event.modifiers() & QtCore.Qt.ShiftModifier
+            )
+
+            face_key = self.drawable_key_for_face(mesh_data, face_index)
+
+            additive = bool(
+                event.modifiers() & QtCore.Qt.ShiftModifier
+            )
+
+            already_selected = self.viewer.is_drawable_selected(face_key)
+
+            # If already selected and not additive, preserve multi-selection for group drag.
+            if already_selected and not additive:
+                pass
+            else:
+                self.viewer.select_drawable(face_key, clear_previous=not additive)
+
+            if additive and event.button() == QtCore.Qt.LeftButton:
+                self.viewer.update()
+                return True
+
+            if event.button() == QtCore.Qt.RightButton:
+                self.show_context_menu(
+                    event,
+                    face_ref
+                )
+
+                self.viewer.update()
+                return True
+
+            self.begin_drag_face(
+                mesh_data,
+                face_index,
+                face_uv_ids,
+                pos
+            )
+
+            return True
+
+        # Shell mode.
         mesh_data, shell_data = self.hit_test_shell(pos)
 
         if not mesh_data or not shell_data:
             return False
+
+        shell_ref = (mesh_data, shell_data)
+
+        self.active_shell = shell_ref
+        self.hover_shell = shell_ref
+
+        self.active_face = None
+        self.hover_face = None
+
+        self.set_active_object(shell_ref)
+        self.set_hover_object(shell_ref)
+
+        self.viewer.select_drawable(
+            self.drawable_key_for_shell(
+                mesh_data,
+                shell_data
+            ),
+            clear_previous=True
+        )
+
+        if event.button() == QtCore.Qt.RightButton:
+            self.show_context_menu(
+                event,
+                shell_ref
+            )
+
+            self.viewer.update()
+            return True
 
         self.begin_drag_shell(
             mesh_data,
@@ -602,12 +1269,18 @@ class EUVDrawer(EDrawableObjectController):
             self.end_drag_shell()
             return True
 
+        if self.is_dragging_face:
+            self.end_drag_face()
+            return True
+
         return False
 
     def leave_event(self, event):
-        if self.is_dragging_shell:
+        if self.is_dragging_shell or self.is_dragging_face:
             return
 
         self.hover_shell = None
+        self.hover_face = None
+
         self.viewer.setCursor(QtCore.Qt.ArrowCursor)
         self.viewer.update()

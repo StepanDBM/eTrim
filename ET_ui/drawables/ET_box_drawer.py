@@ -1,9 +1,9 @@
 # ET_ui/ET_box_drawer.py
 
 try:
-    from PySide2 import QtCore, QtGui
+    from PySide2 import QtCore, QtGui, QtWidgets
 except ImportError:
-    from PySide6 import QtCore, QtGui
+    from PySide6 import QtCore, QtGui, QtWidgets
 
 from ET_ui.drawables.ET_drawable_object import EDrawableObjectController
 
@@ -554,6 +554,156 @@ class EBoxDrawer(EDrawableObjectController):
         self.viewer.update()
 
     # -----------------------------------------------------
+    # Context menu
+    # -----------------------------------------------------
+
+    def build_context_menu(self, box_id):
+        menu = super(EBoxDrawer, self).build_context_menu(box_id)
+
+        menu.addSeparator()
+
+        fit_selected_uvs_action = menu.addAction("Fit Selected UVs In Me")
+        fit_selected_uvs_action.triggered.connect(lambda: self.fit_selected_uvs_in_box(box_id))
+
+        rename_action = menu.addAction("Rename")
+        rename_action.triggered.connect(lambda: self.rename_box(box_id))
+
+        color_action = menu.addAction("Change Color")
+        color_action.triggered.connect(lambda: self.change_box_color(box_id))
+
+        return menu
+
+    def drawable_key_for_box(self, box_id):
+        return (
+            "box",
+            box_id
+        )
+    def delete_drawable(self, box_id):
+        box = self.model().get_box(box_id)
+
+        if not box:
+            return
+
+        print("[eTrim] Delete box from context menu:", box_id)
+
+        self.model().delete_box(box_id)
+        self.clear_hover_object()
+        self.clear_active_object()
+        if self.viewer:
+            self.viewer.deselect_drawable_key(self.drawable_key_for_box(box_id))
+
+        self.viewer.boxesChanged.emit()
+        self.viewer.update()
+
+    def rename_box(self, box_id):
+        box = self.model().get_box(box_id)
+
+        if not box:
+            return
+
+        new_name, accepted = QtWidgets.QInputDialog.getText(
+            self.viewer,
+            "Rename Trim Box",
+            "Box name:",
+            text=box.name
+        )
+
+        if not accepted:
+            return
+
+        new_name = str(new_name).strip()
+
+        if not new_name:
+            return
+
+        box.name = new_name
+
+        print("[eTrim] Renamed box:")
+        print("    id:", box.id)
+        print("    name:", box.name)
+
+        self.viewer.boxesChanged.emit()
+        self.viewer.update()
+
+
+    def change_box_color(self, box_id):
+        box = self.model().get_box(box_id)
+
+        if not box:
+            return
+
+        r, g, b, a = box.color
+
+        initial_color = QtGui.QColor(
+            int(r * 255),
+            int(g * 255),
+            int(b * 255),
+            int(a * 255)
+        )
+
+        color = QtWidgets.QColorDialog.getColor(
+            initial_color,
+            self.viewer,
+            "Change Trim Box Color"
+        )
+
+        if not color.isValid():
+            return
+
+        box.color = (
+            color.red() / 255.0,
+            color.green() / 255.0,
+            color.blue() / 255.0,
+            color.alpha() / 255.0
+        )
+
+        print("[eTrim] Changed box color:")
+        print("    id:", box.id)
+        print("    color:", box.color)
+
+        self.viewer.boxesChanged.emit()
+        self.viewer.update()
+
+    def fit_selected_uvs_in_box(self, box_id):
+        box = self.model().get_box(box_id)
+
+        if not box:
+            return
+
+        if not self.viewer.uv_drawer:
+            return
+
+        result = False
+
+        # 1. First priority: selected UV faces.
+        if hasattr(self.viewer.uv_drawer, "fit_selected_faces_to_box"):
+            result = self.viewer.uv_drawer.fit_selected_faces_to_box(box)
+
+        if result:
+            print("[eTrim] Fit selected UV faces inside box:", box.name)
+            return
+
+        # 2. Second priority: active shell.
+        if hasattr(self.viewer.uv_drawer, "fit_active_shell_to_box"):
+            result = self.viewer.uv_drawer.fit_active_shell_to_box(box)
+
+        if result:
+            print("[eTrim] Fit active UV shell inside box:", box.name)
+            return
+
+        # 3. Last fallback: whole loaded cache.
+        if hasattr(self.viewer.uv_drawer, "fit_cache_to_box"):
+            result = self.viewer.uv_drawer.fit_cache_to_box(
+                self.viewer.uv_cache,
+                box
+            )
+
+        if result:
+            print("[eTrim] Fit loaded UV cache inside box:", box.name)
+        else:
+            print("[eTrim] No selected/active/loaded UVs to fit into box:", box.name)
+
+    # -----------------------------------------------------
     # Event routing
     # -----------------------------------------------------
 
@@ -587,7 +737,10 @@ class EBoxDrawer(EDrawableObjectController):
         return bool(box_id)
 
     def mouse_press_event(self, event):
-        if event.button() != QtCore.Qt.LeftButton:
+        if event.button() not in (
+            QtCore.Qt.LeftButton,
+            QtCore.Qt.RightButton
+        ):
             return False
 
         pos = event.pos()
@@ -596,8 +749,28 @@ class EBoxDrawer(EDrawableObjectController):
         if not box_id:
             return False
 
+        if event.button() == QtCore.Qt.RightButton:
+            self.model().set_active_box(box_id)
+            self.set_active_object(box_id)
+
+            self.viewer.select_drawable(
+                self.drawable_key_for_box(box_id),
+                clear_previous=False
+            )
+
+            self.viewer.activeBoxChanged.emit(box_id)
+            self.show_context_menu(event, box_id)
+            self.viewer.update()
+            return True
+
         self.model().set_active_box(box_id)
         self.set_active_object(box_id)
+
+        self.viewer.select_drawable(
+            self.drawable_key_for_box(box_id),
+            clear_previous=True
+        )
+
         self.viewer.activeBoxChanged.emit(box_id)
 
         if handle == self.HANDLE_BODY:
@@ -637,11 +810,32 @@ class EBoxDrawer(EDrawableObjectController):
         for box in self.model().iter_boxes_by_z():
             rect = self.viewer.box_to_screen_rect(box)
 
-            is_active = box.id == self.model().active_box_id
+            is_selected = self.viewer.is_drawable_selected(
+                self.drawable_key_for_box(box.id)
+            )
+
+            is_active = (
+                box.id == self.model().active_box_id or
+                is_selected
+            )
+
             is_hovered = box.id == self.hover_box_id
 
-            fill = QtGui.QColor(255, 204, 20, 35)
-            outline = QtGui.QColor(255, 204, 20, 230)
+            r, g, b, a = box.color
+
+            fill = QtGui.QColor(
+                int(r * 255),
+                int(g * 255),
+                int(b * 255),
+                35
+            )
+
+            outline = QtGui.QColor(
+                int(r * 255),
+                int(g * 255),
+                int(b * 255),
+                230
+            )
             pen_width = 2
 
             if is_hovered:

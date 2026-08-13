@@ -1,9 +1,9 @@
 # ET_ui/ET_drawable_object.py
 
 try:
-    from PySide2 import QtCore
+    from PySide2 import QtCore, QtWidgets
 except ImportError:
-    from PySide6 import QtCore
+    from PySide6 import QtCore, QtWidgets
 
 
 class EDrawableObjectController(object):
@@ -247,6 +247,50 @@ class EDrawableObjectController(object):
         dy = py - cy
 
         return dx * dx + dy * dy
+
+    # -----------------------------------------------------
+    # Context menu
+    # -----------------------------------------------------
+
+    def build_context_menu(self, drawable_object):
+        """
+        Shared base menu for all drawable objects.
+
+        Subclasses can override this and call super().
+        """
+
+        menu = QtWidgets.QMenu(self.viewer)
+
+        delete_action = menu.addAction("Delete")
+        delete_action.triggered.connect(
+            lambda: self.delete_drawable(drawable_object)
+        )
+
+        return menu
+
+
+    def show_context_menu(self, event, drawable_object):
+        menu = self.build_context_menu(drawable_object)
+
+        if hasattr(menu, "exec_"):
+            menu.exec_(event.globalPos())
+        else:
+            menu.exec(event.globalPos())
+
+
+    def delete_drawable(self, drawable_object):
+        """
+        Base delete behavior.
+
+        Subclasses should override when deletion has real meaning.
+        """
+
+        print(
+            "[eTrim] Delete requested for {}: {}".format(
+                self.drawable_kind,
+                drawable_object
+            )
+        )
 
     # -----------------------------------------------------
     # Virtual-ish event API

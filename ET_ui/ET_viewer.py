@@ -55,12 +55,121 @@ class ETrimViewer(QtWidgets.QWidget):
         self.uv_drawer = EUVDrawer(self)
         self.box_drawer = EBoxDrawer(self)
 
+        self.selected_drawables = []
+
+        self.is_rect_selecting = False
+        self.rect_select_start = None
+        self.rect_select_current = None
+        self.rect_select_additive = False
+
+        self.rect_select_fill = QtGui.QColor(255, 220, 80, 35)
+        self.rect_select_outline = QtGui.QColor(255, 220, 80, 220)
+
     # -----------------------------------------------------
     # Data
     # -----------------------------------------------------
 
     def set_uv_cache(self, uv_cache):
         self.uv_cache = uv_cache
+        self.update()
+
+    def select_drawable(self, drawable_key, clear_previous=True):
+        """
+        Viewer-owned selection list.
+
+        drawable_key examples:
+            ("box", box_id)
+            ("uv_shell", mesh_name, uv_set, shell_id)
+        """
+
+        if clear_previous:
+            self.selected_drawables = []
+
+        if drawable_key not in self.selected_drawables:
+            self.selected_drawables.append(drawable_key)
+
+        self.update()
+
+
+    # -----------------------------------------------------
+    # Selection
+    # -----------------------------------------------------
+    def deselect_drawable_key(self, drawable_key):
+        if drawable_key in self.selected_drawables:
+            self.selected_drawables.remove(drawable_key)
+            self.update()
+
+
+    def is_drawable_selected(self, drawable_key):
+        return drawable_key in self.selected_drawables
+
+
+    def clear_drawable_selection(self):
+        self.selected_drawables = []
+        self.update()
+
+    def is_shift_modifier(self, event):
+        return bool(
+            event.modifiers() & QtCore.Qt.ShiftModifier
+        )
+
+
+    def is_uv_face_selection_mode(self):
+        if not self.uv_drawer:
+            return False
+
+        return getattr(
+            self.uv_drawer,
+            "selection_mode",
+            "shell"
+        ) == "face"
+
+
+    def get_rect_select_rect(self):
+        if not self.rect_select_start or not self.rect_select_current:
+            return QtCore.QRectF()
+
+        return QtCore.QRectF(
+            self.rect_select_start,
+            self.rect_select_current
+        ).normalized()
+
+
+    def begin_rect_selection(self, pos, additive=False):
+        self.is_rect_selecting = True
+        self.rect_select_start = QtCore.QPointF(pos)
+        self.rect_select_current = QtCore.QPointF(pos)
+        self.rect_select_additive = additive
+        self.setCursor(QtCore.Qt.CrossCursor)
+        self.update()
+
+
+    def update_rect_selection(self, pos):
+        if not self.is_rect_selecting:
+            return
+
+        self.rect_select_current = QtCore.QPointF(pos)
+        self.update()
+
+
+    def end_rect_selection(self):
+        if not self.is_rect_selecting:
+            return
+
+        rect = self.get_rect_select_rect()
+
+        self.is_rect_selecting = False
+        self.rect_select_start = None
+        self.rect_select_current = None
+
+        if self.uv_drawer and hasattr(self.uv_drawer, "select_faces_in_rect"):
+            self.uv_drawer.select_faces_in_rect(
+                rect,
+                additive=self.rect_select_additive
+            )
+
+        self.rect_select_additive = False
+        self.setCursor(QtCore.Qt.ArrowCursor)
         self.update()
     def get_active_drawer(self):
         """
@@ -85,7 +194,13 @@ class ETrimViewer(QtWidgets.QWidget):
                 None
             )
 
-            if active_shell:
+            active_face = getattr(
+                self.uv_drawer,
+                "active_face",
+                None
+            )
+
+            if active_shell or active_face:
                 return self.uv_drawer
 
         return None
@@ -161,7 +276,7 @@ class ETrimViewer(QtWidgets.QWidget):
 
         Clears active/hover state from all drawable systems.
         """
-
+        self.clear_drawable_selection()
         if self.box_drawer:
             self.box_drawer.deselect()
 
@@ -183,6 +298,10 @@ class ETrimViewer(QtWidgets.QWidget):
 
     def mouseMoveEvent(self, event):
         pos = event.pos()
+
+        if self.is_rect_selecting:
+            self.update_rect_selection(pos)
+            return
 
         if self.is_panning:
             delta = pos - self.last_mouse_pos
@@ -221,9 +340,12 @@ class ETrimViewer(QtWidgets.QWidget):
 
         # Press is allowed to change selection no matter what was selected before.
         if self.box_drawer.mouse_press_event(event):
-            # Box won this press, so UV selection must stop being active.
-            if self.uv_drawer and hasattr(self.uv_drawer, "deselect"):
-                self.uv_drawer.deselect()
+            # Left-click box changes selection focus.
+            # Right-click box opens menu and must preserve selected UV faces.
+            if event.button() == QtCore.Qt.LeftButton:
+                if self.uv_drawer and hasattr(self.uv_drawer, "deselect"):
+                    self.uv_drawer.deselect()
+
             return
 
         if hasattr(self.uv_drawer, "mouse_press_event"):
@@ -238,12 +360,23 @@ class ETrimViewer(QtWidgets.QWidget):
                 return
 
         if event.button() == QtCore.Qt.LeftButton:
+            if self.is_uv_face_selection_mode():
+                self.begin_rect_selection(
+                    pos,
+                    additive=self.is_shift_modifier(event)
+                )
+                return
+
             self.deselect_drawables()
             return
 
         super(ETrimViewer, self).mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            if self.is_rect_selecting:
+                self.end_rect_selection()
+                return
         if event.button() == QtCore.Qt.MiddleButton:
             self.is_panning = False
             self.setCursor(QtCore.Qt.ArrowCursor)
@@ -319,6 +452,7 @@ class ETrimViewer(QtWidgets.QWidget):
                 self.uv_cache
             )
 
+        self.draw_rect_selection(painter)
         self.draw_hud(painter)
 
         painter.end()
@@ -372,6 +506,19 @@ class ETrimViewer(QtWidgets.QWidget):
             i += 1
 
         painter.restore()
+
+    def draw_rect_selection(self, painter):
+        if not self.is_rect_selecting:
+            return
+
+        rect = self.get_rect_select_rect()
+
+        if rect.isNull():
+            return
+
+        painter.setBrush(QtGui.QBrush(self.rect_select_fill))
+        painter.setPen(QtGui.QPen(self.rect_select_outline, 1))
+        painter.drawRect(rect)
 
     def draw_hud(self, painter):
         painter.setPen(QtGui.QPen(QtGui.QColor(180, 180, 185), 1))
