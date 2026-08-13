@@ -1,9 +1,11 @@
 # ET_ui/ET_uv_drawer.py
 
+import math
+
 try:
-    from PySide2 import QtCore, QtGui
+    from PySide2 import QtCore, QtGui, QtWidgets
 except ImportError:
-    from PySide6 import QtCore, QtGui
+    from PySide6 import QtCore, QtGui, QtWidgets
 
 from ET_ui.drawables.ET_drawable_object import EDrawableObjectController
 from ET_core import ET_uv_model
@@ -591,6 +593,119 @@ class EUVDrawer(EDrawableObjectController):
         return result
 
     # -----------------------------------------------------
+    # Rotation methods
+    # -----------------------------------------------------
+
+    def rotate_uv_pairs(self, uv_pairs, degrees):
+        """
+        Rotate preview UV pairs around their collective bounds center.
+
+        Positive degrees rotate counter-clockwise in UV space.
+        Negative degrees rotate clockwise.
+        """
+
+        if not uv_pairs:
+            return False
+
+        src_u_min, src_v_min, src_u_max, src_v_max = self.get_uv_pair_bounds(
+            uv_pairs
+        )
+
+        center_u = (src_u_min + src_u_max) * 0.5
+        center_v = (src_v_min + src_v_max) * 0.5
+
+        radians = math.radians(-degrees)
+        cos_value = math.cos(radians)
+        sin_value = math.sin(radians)
+
+        for mesh_data, uv_id in uv_pairs:
+            if not hasattr(mesh_data, "preview_uv_positions"):
+                mesh_data.preview_uv_positions = dict(mesh_data.uv_positions)
+
+            u, v = self.get_uv_position(
+                mesh_data,
+                uv_id
+            )
+
+            local_u = u - center_u
+            local_v = v - center_v
+
+            rotated_u = (local_u * cos_value) - (local_v * sin_value)
+            rotated_v = (local_u * sin_value) + (local_v * cos_value)
+
+            mesh_data.preview_uv_positions[uv_id] = (
+                center_u + rotated_u,
+                center_v + rotated_v
+            )
+
+        self.viewer.update()
+        return True
+
+
+    def rotate_shell_context(self, shell_ref, degrees):
+        """
+        Rotate clicked shell, or all selected shells if clicked shell is selected.
+        """
+
+        if not self.is_shell_ref(shell_ref):
+            return False
+
+        uv_pairs = self.get_uv_pairs_for_shell_context(
+            shell_ref
+        )
+
+        if not uv_pairs:
+            return False
+
+        result = self.rotate_uv_pairs(
+            uv_pairs,
+            degrees
+        )
+
+        if result:
+            print("[eTrim] Rotated shell UVs by {} degrees.".format(degrees))
+
+        return result
+
+
+    def rotate_shell_clockwise_90(self, shell_ref):
+        """
+        Rotate shell clockwise by 90 degrees.
+        """
+
+        return self.rotate_shell_context(
+            shell_ref,
+            90.0
+        )
+
+
+    def rotate_shell_arbitrary(self, shell_ref):
+        """
+        Ask user for degrees, then rotate shell.
+        """
+
+        if not self.is_shell_ref(shell_ref):
+            return False
+
+        value, accepted = QtWidgets.QInputDialog.getDouble(
+            self.viewer,
+            "Rotate Shell",
+            "Degrees:",
+            0.0,
+            -3600.0,
+            3600.0,
+            2
+        )
+
+        if not accepted:
+            return False
+
+        return self.rotate_shell_context(
+            shell_ref,
+            float(value)
+        )
+
+    # -----------------------------------------------------
     # Context menu
     # -----------------------------------------------------
     def drawable_key_for_shell(self, mesh_data, shell_data):
@@ -603,6 +718,9 @@ class EUVDrawer(EDrawableObjectController):
     def build_context_menu(self, shell_ref):
         menu = super(EUVDrawer, self).build_context_menu(shell_ref)
 
+        if not self.is_shell_ref(shell_ref):
+            return menu
+
         menu.addSeparator()
 
         fit_inside_selected_box_action = menu.addAction("Fit Inside Selected Box")
@@ -610,8 +728,83 @@ class EUVDrawer(EDrawableObjectController):
             lambda: self.fit_shell_inside_selected_box(shell_ref)
         )
 
+        menu.addSeparator()
+
+        rotate_90_action = menu.addAction("Rotate 90 Clockwise")
+        rotate_90_action.triggered.connect(
+            lambda: self.rotate_shell_clockwise_90(shell_ref)
+        )
+
+        rotate_custom_action = menu.addAction("Rotate...")
+        rotate_custom_action.triggered.connect(
+            lambda: self.rotate_shell_arbitrary(shell_ref)
+        )
+
         return menu
 
+    def is_shell_ref(self, shell_ref):
+        if not shell_ref:
+            return False
+
+        if not isinstance(shell_ref, tuple):
+            return False
+
+        if len(shell_ref) != 2:
+            return False
+
+        mesh_data, shell_data = shell_ref
+
+        return hasattr(shell_data, "shell_id")
+
+
+    def get_selected_shell_keys(self):
+        """
+        Return all selected drawable keys that represent UV shells.
+        """
+
+        selected = []
+
+        for key in self.viewer.selected_drawables:
+            if not key:
+                continue
+
+            if key[0] == "uv_shell":
+                selected.append(key)
+
+        return selected
+
+
+    def get_shell_from_drawable_key(self, drawable_key):
+        """
+        Convert a viewer drawable key back into:
+            mesh_data, shell_data
+        """
+
+        if not drawable_key:
+            return None, None
+
+        if drawable_key[0] != "uv_shell":
+            return None, None
+
+        _, mesh_name, uv_set, shell_id = drawable_key
+
+        if not self.has_cache():
+            return None, None
+
+        cache = self.get_cache()
+
+        for mesh_data in cache.meshes:
+            if mesh_data.mesh_name != mesh_name:
+                continue
+
+            if mesh_data.uv_set != uv_set:
+                continue
+
+            for shell_data in mesh_data.shells:
+                if shell_data.shell_id == shell_id:
+                    return mesh_data, shell_data
+
+        return None, None
 
     def delete_drawable(self, shell_ref):
         """
@@ -845,6 +1038,62 @@ class EUVDrawer(EDrawableObjectController):
 
         return result
 
+    def get_uv_pairs_from_selected_drawables(self, drawable_type):
+        """
+        Convert viewer selected drawable keys into unique UV pairs.
+
+        drawable_type:
+            "uv_shell"
+            "uv_face"
+        """
+
+        uv_pairs = []
+        seen = set()
+
+        selected_keys = self.viewer.get_selected_drawables_by_type(
+            drawable_type
+        )
+
+        for key in selected_keys:
+            if drawable_type == "uv_shell":
+                mesh_data, shell_data = self.get_shell_from_drawable_key(key)
+
+                if not mesh_data or not shell_data:
+                    continue
+
+                source_uv_ids = shell_data.uv_ids
+
+            elif drawable_type == "uv_face":
+                mesh_data, face_index, face_uv_ids = self.get_face_from_drawable_key(key)
+
+                if not mesh_data or not face_uv_ids:
+                    continue
+
+                source_uv_ids = face_uv_ids
+
+            else:
+                continue
+
+            for uv_id in source_uv_ids:
+                pair_key = (
+                    id(mesh_data),
+                    uv_id
+                )
+
+                if pair_key in seen:
+                    continue
+
+                seen.add(pair_key)
+
+                uv_pairs.append(
+                    (
+                        mesh_data,
+                        uv_id
+                    )
+                )
+
+        return uv_pairs
+
     # -----------------------------------------------------
     # Hit testing
     # -----------------------------------------------------
@@ -914,15 +1163,56 @@ class EUVDrawer(EDrawableObjectController):
     # Drag shell
     # -----------------------------------------------------
 
+    def build_drag_start_from_uv_pairs(self, uv_pairs):
+        """
+        Store drag start positions from unique UV pairs.
+        """
+
+        self.drag_start_positions = {}
+
+        for mesh_data, uv_id in uv_pairs:
+            if not hasattr(mesh_data, "preview_uv_positions"):
+                mesh_data.preview_uv_positions = dict(mesh_data.uv_positions)
+
+            pair_key = (
+                id(mesh_data),
+                uv_id
+            )
+
+            self.drag_start_positions[pair_key] = (
+                mesh_data,
+                uv_id,
+                mesh_data.preview_uv_positions[uv_id]
+            )
+
+        bounds_positions = {}
+
+        for index, drag_data in enumerate(self.drag_start_positions.values()):
+            mesh_data, uv_id, start_pos = drag_data
+            bounds_positions[index] = start_pos
+
+        self.drag_start_shell_bounds = self.get_uv_bounds_from_positions(
+            bounds_positions
+        )
+
     def begin_drag_shell(self, mesh_data, shell_data, pos):
         if not hasattr(mesh_data, "preview_uv_positions"):
             mesh_data.preview_uv_positions = dict(mesh_data.uv_positions)
 
-        shell_ref = (mesh_data, shell_data)
+        shell_key = self.drawable_key_for_shell(
+            mesh_data,
+            shell_data
+        )
+
+        shell_ref = (
+            mesh_data,
+            shell_data
+        )
 
         self.is_dragging_shell = True
         self.active_shell = shell_ref
         self.hover_shell = shell_ref
+
         self.set_active_object(shell_ref)
         self.set_hover_object(shell_ref)
 
@@ -930,12 +1220,20 @@ class EUVDrawer(EDrawableObjectController):
             shell_ref,
             pos
         )
-        self.drag_start_positions = {}
 
-        for uv_id in shell_data.uv_ids:
-            self.drag_start_positions[uv_id] = mesh_data.preview_uv_positions[uv_id]
+        if self.viewer.is_drawable_selected(shell_key):
+            uv_pairs = self.get_uv_pairs_from_selected_drawables(
+                "uv_shell"
+            )
+        else:
+            uv_pairs = self.get_uv_pairs_from_shell(
+                mesh_data,
+                shell_data
+            )
 
-        self.drag_start_shell_bounds = self.get_uv_bounds_from_positions(self.drag_start_positions)
+        self.build_drag_start_from_uv_pairs(
+            uv_pairs
+        )
 
         self.viewer.setCursor(QtCore.Qt.SizeAllCursor)
         self.viewer.update()
@@ -947,22 +1245,10 @@ class EUVDrawer(EDrawableObjectController):
         if not self.active_shell:
             return
 
-        mesh_data, shell_data = self.active_shell
         du, dv = self.get_drag_delta_uv(pos)
 
-        if self.drag_start_shell_bounds:
-            u_min, v_min, u_max, v_max = self.drag_start_shell_bounds
-
-            du, dv = self.clamp_uv_delta_to_tile(
-                u_min,
-                v_min,
-                u_max,
-                v_max,
-                du,
-                dv
-            )
-
-        for uv_id, start_pos in self.drag_start_positions.items():
+        for drag_data in self.drag_start_positions.values():
+            mesh_data, uv_id, start_pos = drag_data
             original_u, original_v = start_pos
 
             mesh_data.preview_uv_positions[uv_id] = (
@@ -1045,6 +1331,162 @@ class EUVDrawer(EDrawableObjectController):
 
         return None, None, None
 
+    def get_selected_shell_keys(self):
+        """
+        Return all selected drawable keys that represent UV shells.
+        """
+
+        return self.viewer.get_selected_drawables_by_type("uv_shell")
+
+    def get_shell_from_drawable_key(self, drawable_key):
+        """
+        Convert a viewer drawable key back into:
+            mesh_data, shell_data
+        """
+
+        if not drawable_key:
+            return None, None
+
+        if drawable_key[0] != "uv_shell":
+            return None, None
+
+        _, mesh_name, uv_set, shell_id = drawable_key
+
+        if not self.has_cache():
+            return None, None
+
+        cache = self.get_cache()
+
+        for mesh_data in cache.meshes:
+            if mesh_data.mesh_name != mesh_name:
+                continue
+
+            if mesh_data.uv_set != uv_set:
+                continue
+
+            for shell_data in mesh_data.shells:
+                if shell_data.shell_id == shell_id:
+                    return mesh_data, shell_data
+
+        return None, None
+
+    def get_uv_pairs_from_selected_shells(self):
+        """
+        Return unique UV pairs from all selected UV shells.
+
+        Returns:
+            [(mesh_data, uv_id), ...]
+        """
+
+        selected_keys = self.get_selected_shell_keys()
+
+        uv_pairs = []
+        seen = set()
+
+        for key in selected_keys:
+            mesh_data, shell_data = self.get_shell_from_drawable_key(key)
+
+            if not mesh_data or not shell_data:
+                continue
+
+            for uv_id in shell_data.uv_ids:
+                pair_key = (
+                    id(mesh_data),
+                    uv_id
+                )
+
+                if pair_key in seen:
+                    continue
+
+                seen.add(pair_key)
+                uv_pairs.append(
+                    (
+                        mesh_data,
+                        uv_id
+                    )
+                )
+
+        return uv_pairs
+
+    def get_uv_pairs_from_shell(self, mesh_data, shell_data):
+        """
+        Return unique UV pairs from one shell.
+        """
+
+        uv_pairs = []
+        seen = set()
+
+        for uv_id in shell_data.uv_ids:
+            pair_key = (
+                id(mesh_data),
+                uv_id
+            )
+
+            if pair_key in seen:
+                continue
+
+            seen.add(pair_key)
+            uv_pairs.append(
+                (
+                    mesh_data,
+                    uv_id
+                )
+            )
+
+        return uv_pairs
+
+
+    def get_uv_pairs_for_shell_context(self, shell_ref):
+        """
+        If the clicked shell is selected, rotate all selected shells.
+        Otherwise rotate only the clicked shell.
+        """
+
+        if not shell_ref:
+            return []
+
+        mesh_data, shell_data = shell_ref
+
+        clicked_key = self.drawable_key_for_shell(
+            mesh_data,
+            shell_data
+        )
+
+        if self.viewer.is_drawable_selected(clicked_key):
+            selected_shell_keys = self.get_selected_shell_keys()
+
+            uv_pairs = []
+            seen = set()
+
+            for key in selected_shell_keys:
+                selected_mesh_data, selected_shell_data = self.get_shell_from_drawable_key(key)
+
+                if not selected_mesh_data or not selected_shell_data:
+                    continue
+
+                for uv_id in selected_shell_data.uv_ids:
+                    pair_key = (
+                        id(selected_mesh_data),
+                        uv_id
+                    )
+
+                    if pair_key in seen:
+                        continue
+
+                    seen.add(pair_key)
+                    uv_pairs.append(
+                        (
+                            selected_mesh_data,
+                            uv_id
+                        )
+                    )
+
+            return uv_pairs
+
+        return self.get_uv_pairs_from_shell(
+            mesh_data,
+            shell_data
+        )
 
     def get_uv_pairs_from_selected_faces(self):
         """
@@ -1111,12 +1553,10 @@ class EUVDrawer(EDrawableObjectController):
             pos
         )
 
-        self.drag_start_positions = {}
-
-        # If the clicked face is part of the current selection,
-        # drag all selected UV faces together.
         if self.viewer.is_drawable_selected(face_key):
-            uv_pairs = self.get_uv_pairs_from_selected_faces()
+            uv_pairs = self.get_uv_pairs_from_selected_drawables(
+                "uv_face"
+            )
         else:
             uv_pairs = [
                 (
@@ -1126,35 +1566,12 @@ class EUVDrawer(EDrawableObjectController):
                 for uv_id in face_uv_ids
             ]
 
-        for pair_mesh_data, uv_id in uv_pairs:
-            if not hasattr(pair_mesh_data, "preview_uv_positions"):
-                pair_mesh_data.preview_uv_positions = dict(pair_mesh_data.uv_positions)
-
-            pair_key = (
-                id(pair_mesh_data),
-                uv_id
-            )
-
-            self.drag_start_positions[pair_key] = (
-                pair_mesh_data,
-                uv_id,
-                pair_mesh_data.preview_uv_positions[uv_id]
-            )
-
-        # Bounds need only the UV positions, so convert the drag data.
-        bounds_positions = {}
-
-        for index, drag_data in enumerate(self.drag_start_positions.values()):
-            pair_mesh_data, uv_id, start_pos = drag_data
-            bounds_positions[index] = start_pos
-
-        self.drag_start_shell_bounds = self.get_uv_bounds_from_positions(
-            bounds_positions
+        self.build_drag_start_from_uv_pairs(
+            uv_pairs
         )
 
         self.viewer.setCursor(QtCore.Qt.SizeAllCursor)
         self.viewer.update()
-
 
     def update_drag_face(self, pos):
         if not self.is_dragging_face:
@@ -1164,18 +1581,6 @@ class EUVDrawer(EDrawableObjectController):
             return
 
         du, dv = self.get_drag_delta_uv(pos)
-
-        if self.drag_start_shell_bounds:
-            u_min, v_min, u_max, v_max = self.drag_start_shell_bounds
-
-            du, dv = self.clamp_uv_delta_to_tile(
-                u_min,
-                v_min,
-                u_max,
-                v_max,
-                du,
-                dv
-            )
 
         for drag_data in self.drag_start_positions.values():
             mesh_data, uv_id, start_pos = drag_data
@@ -1187,8 +1592,6 @@ class EUVDrawer(EDrawableObjectController):
             )
 
         self.viewer.update()
-
-
 
     def end_drag_face(self):
         if not self.is_dragging_face:
@@ -1321,10 +1724,9 @@ class EUVDrawer(EDrawableObjectController):
                 event.modifiers() & QtCore.Qt.ShiftModifier
             )
 
-            face_key = self.drawable_key_for_face(mesh_data, face_index)
-
-            additive = bool(
-                event.modifiers() & QtCore.Qt.ShiftModifier
+            face_key = self.drawable_key_for_face(
+                mesh_data,
+                face_index
             )
 
             already_selected = self.viewer.is_drawable_selected(face_key)
@@ -1333,7 +1735,10 @@ class EUVDrawer(EDrawableObjectController):
             if already_selected and not additive:
                 pass
             else:
-                self.viewer.select_drawable(face_key, clear_previous=not additive)
+                self.viewer.select_drawable(
+                    face_key,
+                    clear_previous=not additive
+                )
 
             if additive and event.button() == QtCore.Qt.LeftButton:
                 self.viewer.update()
@@ -1363,7 +1768,10 @@ class EUVDrawer(EDrawableObjectController):
         if not mesh_data or not shell_data:
             return False
 
-        shell_ref = (mesh_data, shell_data)
+        shell_ref = (
+            mesh_data,
+            shell_data
+        )
 
         self.active_shell = shell_ref
         self.hover_shell = shell_ref
@@ -1374,13 +1782,31 @@ class EUVDrawer(EDrawableObjectController):
         self.set_active_object(shell_ref)
         self.set_hover_object(shell_ref)
 
-        self.viewer.select_drawable(
-            self.drawable_key_for_shell(
-                mesh_data,
-                shell_data
-            ),
-            clear_previous=True
+        shell_key = self.drawable_key_for_shell(
+            mesh_data,
+            shell_data
         )
+
+        additive = bool(
+            event.modifiers() & QtCore.Qt.ShiftModifier
+        )
+
+        already_selected = self.viewer.is_drawable_selected(shell_key)
+
+        # If clicked shell is already selected and not additive,
+        # preserve multi-selection for group drag.
+        if already_selected and not additive:
+            pass
+        else:
+            self.viewer.select_drawable(
+                shell_key,
+                clear_previous=not additive
+            )
+
+        # Shift-click selects/adds but does not immediately drag.
+        if additive and event.button() == QtCore.Qt.LeftButton:
+            self.viewer.update()
+            return True
 
         if event.button() == QtCore.Qt.RightButton:
             self.show_context_menu(

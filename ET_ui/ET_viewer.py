@@ -73,17 +73,27 @@ class ETrimViewer(QtWidgets.QWidget):
         self.uv_cache = uv_cache
         self.update()
 
-    def select_drawable(self, drawable_key, clear_previous=True):
+    def select_drawable(self, drawable_key, clear_previous=True, toggle=False):
         """
         Viewer-owned selection list.
 
         drawable_key examples:
             ("box", box_id)
             ("uv_shell", mesh_name, uv_set, shell_id)
+            ("uv_face", mesh_name, uv_set, face_index)
         """
 
         if clear_previous:
             self.selected_drawables = []
+
+        if toggle:
+            if drawable_key in self.selected_drawables:
+                self.selected_drawables.remove(drawable_key)
+            else:
+                self.selected_drawables.append(drawable_key)
+
+            self.update()
+            return
 
         if drawable_key not in self.selected_drawables:
             self.selected_drawables.append(drawable_key)
@@ -233,6 +243,27 @@ class ETrimViewer(QtWidgets.QWidget):
 
     def has_active_drawable(self):
         return self.get_active_drawer() is not None
+
+    def get_selected_drawables_by_type(self, drawable_type):
+        """
+        Return selected drawable keys matching a type.
+
+        drawable_type examples:
+            "uv_shell"
+            "uv_face"
+            "box"
+        """
+
+        result = []
+
+        for key in self.selected_drawables:
+            if not key:
+                continue
+
+            if key[0] == drawable_type:
+                result.append(key)
+
+        return result
     # -----------------------------------------------------
     # Coordinate conversion
     # -----------------------------------------------------
