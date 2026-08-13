@@ -117,60 +117,256 @@ class ETrimModel:
         return True
 
 
-    def find_free_box_rect(self):
-        """
-        Find the first available non-overlapping place for a new trim box.
+    def clamp_value(self, value, minimum, maximum):
+        return max(minimum, min(maximum, value))
 
-        Searches the 0-1 tile from top-left to bottom-right.
+
+    def sanitize_box_size(self, width, height):
+        """
+        Clamp requested size into valid 0-1 UV size.
+        """
+
+        width = float(width)
+        height = float(height)
+
+        width = self.clamp_value(width, 0.001, 1.0)
+        height = self.clamp_value(height, 0.001, 1.0)
+
+        return width, height
+
+
+    def make_rect_from_origin(self, u_min, v_min, width, height):
+        """
+        Create rect from bottom-left corner and size.
+        """
+
+        width, height = self.sanitize_box_size(
+            width,
+            height
+        )
+
+        u_min = self.clamp_value(float(u_min), 0.0, 1.0 - width)
+        v_min = self.clamp_value(float(v_min), 0.0, 1.0 - height)
+
+        u_max = u_min + width
+        v_max = v_min + height
+
+        return (
+            round(u_min, 5),
+            round(v_min, 5),
+            round(u_max, 5),
+            round(v_max, 5)
+        )
+
+
+    def make_rect_centered(self, center_u, center_v, width, height):
+        """
+        Create rect centered on a point, clamped inside 0-1.
+        """
+
+        width, height = self.sanitize_box_size(
+            width,
+            height
+        )
+
+        u_min = float(center_u) - width * 0.5
+        v_min = float(center_v) - height * 0.5
+
+        return self.make_rect_from_origin(
+            u_min,
+            v_min,
+            width,
+            height
+        )
+
+
+    def find_free_box_rect(self, width, height, preferred_u=0.0, preferred_v=0.0):
+        """
+        Find a free non-overlapping rect of exact requested size.
+
+        Search starts near preferred_u/preferred_v.
+        If preferred location is occupied, search closest available position.
 
         Returns:
             (u_min, v_min, u_max, v_max)
+            or None.
         """
 
-        # Try nice practical default sizes first.
-        candidate_sizes = [
-            (0.25, 0.25),
-            (0.20, 0.20),
-            (0.125, 0.125),
-            (0.10, 0.10),
-            (0.05, 0.05)
-        ]
+        width, height = self.sanitize_box_size(
+            width,
+            height
+        )
+
+        # First try exact preferred position.
+        preferred_rect = self.make_rect_from_origin(
+            preferred_u,
+            preferred_v,
+            width,
+            height
+        )
+
+        if self.box_area_is_free(*preferred_rect):
+            return preferred_rect
 
         step = 0.025
 
-        for width, height in candidate_sizes:
-            # Search visually from top to bottom.
-            v = 1.0 - height
+        max_u = 1.0 - width
+        max_v = 1.0 - height
 
-            while v >= -0.0001:
-                u = 0.0
+        if max_u < 0.0 or max_v < 0.0:
+            return None
 
-                while u + width <= 1.0001:
-                    u_min = round(u, 5)
-                    v_min = round(v, 5)
-                    u_max = round(u + width, 5)
-                    v_max = round(v + height, 5)
+        candidates = []
 
-                    if self.box_area_is_free(
-                        u_min,
-                        v_min,
-                        u_max,
-                        v_max
-                    ):
-                        return u_min, v_min, u_max, v_max
+        v = 0.0
+        while v <= max_v + 0.0001:
+            u = 0.0
 
-                    u += step
+            while u <= max_u + 0.0001:
+                rect = self.make_rect_from_origin(
+                    u,
+                    v,
+                    width,
+                    height
+                )
 
-                v -= step
+                if self.box_area_is_free(*rect):
+                    distance_sq = (
+                        (rect[0] - preferred_rect[0]) *
+                        (rect[0] - preferred_rect[0])
+                    ) + (
+                        (rect[1] - preferred_rect[1]) *
+                        (rect[1] - preferred_rect[1])
+                    )
 
-        # If everything is full, return a tiny fallback in the corner.
-        # In practice we will later warn the user instead.
-        return 0.0, 0.0, 0.05, 0.05
+                    candidates.append(
+                        (
+                            distance_sq,
+                            rect
+                        )
+                    )
 
-    def create_box(self):
+                u += step
+
+            v += step
+
+        if not candidates:
+            return None
+
+        candidates.sort(
+            key=lambda item: item[0]
+        )
+
+        return candidates[0][1]
+
+
+    def find_best_fitting_box_rect(self, width, height, preferred_u=0.0, preferred_v=0.0):
+        """
+        Find the biggest possible box that fits without overlap.
+
+        Starts with requested size.
+        If requested size does not fit, shrink proportionally until it fits.
+        """
+
+        width, height = self.sanitize_box_size(
+            width,
+            height
+        )
+
+        # Try requested size first.
+        rect = self.find_free_box_rect(
+            width,
+            height,
+            preferred_u=preferred_u,
+            preferred_v=preferred_v
+        )
+
+        if rect:
+            return rect
+
+        # Shrink proportionally until it fits.
+        scale = 0.95
+
+        current_width = width
+        current_height = height
+
+        while current_width >= 0.001 and current_height >= 0.001:
+            current_width *= scale
+            current_height *= scale
+
+            rect = self.find_free_box_rect(
+                current_width,
+                current_height,
+                preferred_u=preferred_u,
+                preferred_v=preferred_v
+            )
+
+            if rect:
+                return rect
+
+        return None
+
+
+    def create_box(self, width=0.20, height=0.20, preferred_u=0.0, preferred_v=0.0, centered=False):
+        """
+        Create a new trim box.
+
+        Rules:
+            - Use requested width/height if possible.
+            - Try requested/preferred position first.
+            - If that position is occupied, find the closest free position.
+            - If requested size cannot fit anywhere, shrink until it fits.
+            - Never overlap.
+            - Never go outside 0-1.
+
+        Args:
+            width:
+                Width in UV space. 1.0 equals 100 percent of tile.
+
+            height:
+                Height in UV space. 1.0 equals 100 percent of tile.
+
+            preferred_u/preferred_v:
+                Preferred creation point.
+
+            centered:
+                If True, preferred_u/preferred_v is treated as center.
+                If False, preferred_u/preferred_v is treated as bottom-left origin.
+
+        Returns:
+            TrimBox or None
+        """
+
+        width, height = self.sanitize_box_size(
+            width,
+            height
+        )
+
+        if centered:
+            preferred_rect = self.make_rect_centered(
+                preferred_u,
+                preferred_v,
+                width,
+                height
+            )
+
+            preferred_u = preferred_rect[0]
+            preferred_v = preferred_rect[1]
+
+        rect = self.find_best_fitting_box_rect(
+            width,
+            height,
+            preferred_u=preferred_u,
+            preferred_v=preferred_v
+        )
+
+        if not rect:
+            print("[eTrim] Could not create box. No free area available.")
+            return None
+
+        u_min, v_min, u_max, v_max = rect
+
         index = len(self.box_order) + 1
-
-        u_min, v_min, u_max, v_max = self.find_free_box_rect()
 
         box = TrimBox.create(
             name="Trim Box {:02d}".format(index),

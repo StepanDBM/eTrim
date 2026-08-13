@@ -132,17 +132,14 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         main_layout.setContentsMargins(8, 8, 8, 8)
         main_layout.setSpacing(6)
 
+        # -----------------------------------------------------
         # Top toolbar
+        # -----------------------------------------------------
         toolbar_layout = QtWidgets.QHBoxLayout()
         toolbar_layout.setSpacing(6)
 
         self.load_selection_btn = QtWidgets.QPushButton("Load Selected UVs")
         self.apply_btn = QtWidgets.QPushButton("Apply")
-
-        self.save_layout_btn = QtWidgets.QPushButton("Save .etrim")
-        self.load_layout_btn = QtWidgets.QPushButton("Load .etrim")
-        self.save_scene_layout_btn = QtWidgets.QPushButton("Save To Scene")
-        self.load_scene_layout_btn = QtWidgets.QPushButton("Load From Scene")
 
         self.create_box_btn = QtWidgets.QPushButton("Create Box")
         self.delete_box_btn = QtWidgets.QPushButton("Delete Box")
@@ -152,25 +149,26 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         toolbar_layout.addWidget(self.load_selection_btn)
         toolbar_layout.addWidget(self.apply_btn)
 
-        toolbar_layout.addWidget(self.save_layout_btn)
-        toolbar_layout.addWidget(self.load_layout_btn)
-        toolbar_layout.addWidget(self.save_scene_layout_btn)
-        toolbar_layout.addWidget(self.load_scene_layout_btn)
         toolbar_layout.addSpacing(12)
 
         toolbar_layout.addWidget(self.create_box_btn)
         toolbar_layout.addWidget(self.delete_box_btn)
         toolbar_layout.addWidget(self.clear_boxes_btn)
+
         toolbar_layout.addSpacing(12)
+
         toolbar_layout.addWidget(self.frame_btn)
         toolbar_layout.addStretch()
 
         main_layout.addLayout(toolbar_layout)
 
-        # Selection filter toolbar
+        # -----------------------------------------------------
+        # Tool / storage toolbar
+        # -----------------------------------------------------
         selection_toolbar_layout = QtWidgets.QHBoxLayout()
         selection_toolbar_layout.setSpacing(6)
 
+        # Left side: interaction toggles
         self.enable_uv_selection_btn = QtWidgets.QPushButton("UV Selection: ON")
         self.enable_uv_selection_btn.setCheckable(True)
         self.enable_uv_selection_btn.setChecked(True)
@@ -185,20 +183,40 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         selection_toolbar_layout.addWidget(self.enable_uv_selection_btn)
         selection_toolbar_layout.addWidget(self.enable_box_selection_btn)
         selection_toolbar_layout.addWidget(self.uv_select_mode_btn)
+
+        # Spacer pushes save/load buttons to the right side.
         selection_toolbar_layout.addStretch()
+
+        # Right side: storage buttons
+        self.save_layout_btn = QtWidgets.QPushButton("Save .etrim")
+        self.load_layout_btn = QtWidgets.QPushButton("Load .etrim")
+        self.save_scene_layout_btn = QtWidgets.QPushButton("Save To Scene")
+        self.load_scene_layout_btn = QtWidgets.QPushButton("Load From Scene")
+
+        selection_toolbar_layout.addWidget(self.save_layout_btn)
+        selection_toolbar_layout.addWidget(self.load_layout_btn)
+        selection_toolbar_layout.addWidget(self.save_scene_layout_btn)
+        selection_toolbar_layout.addWidget(self.load_scene_layout_btn)
 
         main_layout.addLayout(selection_toolbar_layout)
 
+        # -----------------------------------------------------
         # Info label
+        # -----------------------------------------------------
         self.info_label = QtWidgets.QLabel()
         self.info_label.setMinimumHeight(20)
         main_layout.addWidget(self.info_label)
 
+        # -----------------------------------------------------
         # Viewer
+        # -----------------------------------------------------
         self.viewer = ETrimViewer(self.model)
         main_layout.addWidget(self.viewer, 1)
 
-        self.storage = ETrimStorage(self.model, self.viewer)
+        self.storage = ETrimStorage(
+            self.model,
+            self.viewer
+        )
 
     def create_connections(self):
         self.load_selection_btn.clicked.connect(self.load_selected_uvs)
@@ -370,13 +388,34 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
 
 
     def create_box(self):
-        box = self.model.create_box()
+        width = self.viewer.create_box_width_percent / 100.0
+        height = self.viewer.create_box_height_percent / 100.0
+
+        box = self.model.create_box(
+            width=width,
+            height=height,
+            preferred_u=0.0,
+            preferred_v=0.0,
+            centered=False
+        )
+
+        if not box:
+            print("[eTrim] Could not create box.")
+            return
 
         print("[eTrim] Created box:")
         print("    id:", box.id)
         print("    name:", box.name)
         print("    uv:", box.u_min, box.v_min, box.u_max, box.v_max)
         print("    z:", box.z_index)
+
+        self.viewer.select_drawable(
+            self.viewer.box_drawer.drawable_key_for_box(box.id),
+            clear_previous=True
+        )
+
+        self.viewer.activeBoxChanged.emit(box.id)
+        self.viewer.boxesChanged.emit()
 
         self.refresh_info()
         self.viewer.update()

@@ -811,7 +811,7 @@ class EUVDrawer(EDrawableObjectController):
         rotate_90_action.triggered.connect(lambda: self.rotate_shell_clockwise_90(shell_ref))
 
         rotate_custom_action = menu.addAction("Rotate...")
-        rotate_custom_action.triggered.connect(lambda: self.rotate_shell_arbitrary(shell_ref))
+        rotate_custom_action.triggered.connect(lambda: self.rotate_shell_arbitrary(shell_ref)   )
 
         return menu
 

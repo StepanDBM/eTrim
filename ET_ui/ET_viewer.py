@@ -60,10 +60,18 @@ class ETrimViewer(QtWidgets.QWidget):
         self.uv_selection_enabled = True
         self.box_selection_enabled = True
 
+        self.create_box_width_percent = 20.0
+        self.create_box_height_percent = 20.0
+
         self.is_rect_selecting = False
         self.rect_select_start = None
         self.rect_select_current = None
         self.rect_select_additive = False
+
+        self.is_pending_rect_select = False
+        self.pending_rect_select_start = None
+        self.pending_rect_select_additive = False
+        self.rect_select_start_threshold = 4.0
 
         self.rect_select_fill = QtGui.QColor(255, 220, 80, 35)
         self.rect_select_outline = QtGui.QColor(255, 220, 80, 220)
@@ -241,6 +249,40 @@ class ETrimViewer(QtWidgets.QWidget):
         self.rect_select_additive = False
         self.setCursor(QtCore.Qt.ArrowCursor)
         self.update()
+    #pending rectselection andthreshold
+    def begin_pending_rect_selection(self, pos, additive=False):
+        """
+        Store a possible rectangle selection.
+
+        Actual rectangle selection only starts after the mouse moves
+        more than rect_select_start_threshold pixels.
+        """
+
+        self.is_pending_rect_select = True
+        self.pending_rect_select_start = QtCore.QPointF(pos)
+        self.pending_rect_select_additive = additive
+
+
+    def cancel_pending_rect_selection(self):
+        self.is_pending_rect_select = False
+        self.pending_rect_select_start = None
+        self.pending_rect_select_additive = False
+
+
+    def pending_rect_selection_distance_sq(self, pos):
+        if not self.pending_rect_select_start:
+            return 0.0
+
+        dx = float(pos.x()) - float(self.pending_rect_select_start.x())
+        dy = float(pos.y()) - float(self.pending_rect_select_start.y())
+
+        return dx * dx + dy * dy
+
+
+    def should_start_rect_selection(self, pos):
+        threshold = float(self.rect_select_start_threshold)
+        return self.pending_rect_selection_distance_sq(pos) >= threshold * threshold
+
     def get_active_drawer(self):
         """
         Return the drawer that currently owns active selection.
@@ -377,6 +419,133 @@ class ETrimViewer(QtWidgets.QWidget):
         self.setCursor(QtCore.Qt.ArrowCursor)
         self.update()
 
+    def create_box_at_screen_pos(self, pos):
+        """
+        Ask the model to create a box centered on a viewer click.
+
+        Viewer only converts screen position to UV coordinates.
+        Model owns creation, collision, shrinking, and placement.
+        """
+
+        center_u, center_v = self.screen_to_uv(pos)
+
+        width = self.create_box_width_percent / 100.0
+        height = self.create_box_height_percent / 100.0
+
+        box = self.model.create_box(
+            width=width,
+            height=height,
+            preferred_u=center_u,
+            preferred_v=center_v,
+            centered=True
+        )
+
+        if not box:
+            print("[eTrim] Could not create box from context menu.")
+            return None
+
+        self.model.set_active_box(box.id)
+
+        self.select_drawable(
+            self.box_drawer.drawable_key_for_box(box.id),
+            clear_previous=True
+        )
+
+        self.activeBoxChanged.emit(box.id)
+        self.boxesChanged.emit()
+        self.update()
+
+        print("[eTrim] Created box from empty context menu:")
+        print("    id:", box.id)
+        print("    name:", box.name)
+        print("    uv:", box.u_min, box.v_min, box.u_max, box.v_max)
+
+        return box
+
+    def edit_create_box_settings(self):
+        """
+        Edit default create-box size as percentage of the 0-1 UV tile.
+        """
+
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("Create Box Settings")
+
+        layout = QtWidgets.QVBoxLayout(dialog)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        width_label = QtWidgets.QLabel("Width (% of 0-1 tile):")
+        width_spin = QtWidgets.QDoubleSpinBox()
+        width_spin.setRange(0.1, 100.0)
+        width_spin.setDecimals(2)
+        width_spin.setSingleStep(1.0)
+        width_spin.setSuffix(" %")
+        width_spin.setValue(self.create_box_width_percent)
+
+        height_label = QtWidgets.QLabel("Height (% of 0-1 tile):")
+        height_spin = QtWidgets.QDoubleSpinBox()
+        height_spin.setRange(0.1, 100.0)
+        height_spin.setDecimals(2)
+        height_spin.setSingleStep(1.0)
+        height_spin.setSuffix(" %")
+        height_spin.setValue(self.create_box_height_percent)
+
+        layout.addWidget(width_label)
+        layout.addWidget(width_spin)
+        layout.addWidget(height_label)
+        layout.addWidget(height_spin)
+
+        button_layout = QtWidgets.QHBoxLayout()
+        button_layout.addStretch()
+
+        ok_btn = QtWidgets.QPushButton("OK")
+        cancel_btn = QtWidgets.QPushButton("Cancel")
+
+        button_layout.addWidget(ok_btn)
+        button_layout.addWidget(cancel_btn)
+
+        layout.addLayout(button_layout)
+
+        ok_btn.clicked.connect(dialog.accept)
+        cancel_btn.clicked.connect(dialog.reject)
+
+        if dialog.exec_() if hasattr(dialog, "exec_") else dialog.exec():
+            self.create_box_width_percent = float(width_spin.value())
+            self.create_box_height_percent = float(height_spin.value())
+
+            print("[eTrim] Create box settings changed:")
+            print("    width %:", self.create_box_width_percent)
+            print("    height %:", self.create_box_height_percent)
+
+    def build_empty_context_menu(self, pos):
+        """
+        Context menu for empty viewer space.
+        """
+
+        menu = QtWidgets.QMenu(self)
+
+        create_box_action = menu.addAction("Create Box")
+        create_box_action.triggered.connect(
+            lambda: self.create_box_at_screen_pos(pos)
+        )
+
+        settings_action = menu.addAction("Create Box Settings")
+        settings_action.triggered.connect(
+            self.edit_create_box_settings
+        )
+
+        return menu
+
+
+    def show_empty_context_menu(self, event):
+        menu = self.build_empty_context_menu(
+            event.pos()
+        )
+
+        if hasattr(menu, "exec_"):
+            menu.exec_(event.globalPos())
+        else:
+            menu.exec(event.globalPos())
     # -----------------------------------------------------
     # Events
     # -----------------------------------------------------
@@ -410,6 +579,23 @@ class ETrimViewer(QtWidgets.QWidget):
 
     def mouseMoveEvent(self, event):
         pos = event.pos()
+
+        if self.is_pending_rect_select:
+            if self.should_start_rect_selection(pos):
+                start_pos = self.pending_rect_select_start
+                additive = self.pending_rect_select_additive
+
+                self.cancel_pending_rect_selection()
+
+                self.begin_rect_selection(
+                    start_pos,
+                    additive=additive
+                )
+
+                self.update_rect_selection(pos)
+                return
+
+            return
 
         if self.is_rect_selecting:
             self.update_rect_selection(pos)
@@ -496,10 +682,11 @@ class ETrimViewer(QtWidgets.QWidget):
                         self.uv_drawer.deselect()
                 return
 
-        # Empty click-drag starts rectangle selection in shell or face mode.
+        # Empty click may clear selection.
+        # Empty click-drag starts rectangle selection only after a small movement threshold.
         if event.button() == QtCore.Qt.LeftButton:
             if self.uv_selection_enabled and self.is_uv_selection_mode():
-                self.begin_rect_selection(
+                self.begin_pending_rect_selection(
                     pos,
                     additive=self.is_shift_modifier(event)
                 )
@@ -507,10 +694,19 @@ class ETrimViewer(QtWidgets.QWidget):
 
             self.deselect_drawables()
             return
-
+        
+        if event.button() == QtCore.Qt.RightButton:
+            self.show_empty_context_menu(event)
+            return
         super(ETrimViewer, self).mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            if self.is_pending_rect_select:
+                self.cancel_pending_rect_selection()
+                self.deselect_drawables()
+                return
+
         if event.button() == QtCore.Qt.LeftButton:
             if self.is_rect_selecting:
                 self.end_rect_selection()
@@ -522,7 +718,7 @@ class ETrimViewer(QtWidgets.QWidget):
             return
 
         # Finish box interactions first if one is active.
-        if self.box_drawer:
+        if self.box_selection_enabled and self.box_drawer:
             if (
                 getattr(self.box_drawer, "is_dragging_box", False) or
                 getattr(self.box_drawer, "is_resizing", False)
@@ -531,7 +727,7 @@ class ETrimViewer(QtWidgets.QWidget):
                     return
 
         # Finish UV interactions if one is active.
-        if self.uv_drawer:
+        if self.uv_selection_enabled and self.uv_drawer:
             if (
                 getattr(self.uv_drawer, "is_dragging_shell", False) or
                 getattr(self.uv_drawer, "is_dragging_face", False)
@@ -539,12 +735,14 @@ class ETrimViewer(QtWidgets.QWidget):
                 if self.uv_drawer.mouse_release_event(event):
                     return
 
-        if self.box_drawer.mouse_release_event(event):
-            return
-
-        if hasattr(self.uv_drawer, "mouse_release_event"):
-            if self.uv_drawer.mouse_release_event(event):
+        if self.box_selection_enabled:
+            if self.box_drawer.mouse_release_event(event):
                 return
+
+        if self.uv_selection_enabled:
+            if hasattr(self.uv_drawer, "mouse_release_event"):
+                if self.uv_drawer.mouse_release_event(event):
+                    return
 
         super(ETrimViewer, self).mouseReleaseEvent(event)
 
