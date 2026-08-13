@@ -6,6 +6,7 @@ except ImportError:
     from PySide6 import QtCore, QtGui
 
 from ET_ui.drawables.ET_drawable_object import EDrawableObjectController
+from ET_core import ET_uv_model
 
 class EUVDrawer(EDrawableObjectController):
     """
@@ -173,7 +174,26 @@ class EUVDrawer(EDrawableObjectController):
                 return index
 
         return -1
+    
+    def get_shell_screen_bounds(self, mesh_data, shell_data):
+        """
+        Return screen-space bounding rect for a shell.
+        """
 
+        polygon = QtGui.QPolygonF()
+
+        for uv_id in shell_data.uv_ids:
+            polygon.append(
+                self.uv_point_to_screen(
+                    mesh_data,
+                    uv_id
+                )
+            )
+
+        if polygon.isEmpty():
+            return QtCore.QRectF()
+
+        return polygon.boundingRect()
 
     def uv_polygon_for_face(self, mesh_data, face_uv_ids):
         polygon = QtGui.QPolygonF()
@@ -485,15 +505,29 @@ class EUVDrawer(EDrawableObjectController):
 
     def fit_selected_faces_to_box(self, box):
         """
-        Fit currently selected UV faces into one trim box.
+        Split selected UV faces into their own preview island,
+        then fit only those selected faces into one trim box.
 
-        Uses viewer.selected_drawables.
         Preview only.
         """
 
         if not box:
             return False
 
+        selected_by_mesh = self.get_selected_face_indices_by_mesh()
+
+        if not selected_by_mesh:
+            return False
+
+        # Split faces first, so trimming does not pull the whole shell.
+        for mesh_data, face_indices in selected_by_mesh.items():
+            ET_uv_model.split_faces_to_preview_shell(
+                mesh_data,
+                face_indices
+            )
+
+        # After splitting, selected face keys still use the same face indices,
+        # but the face uv ids now point to duplicated preview uv ids.
         uv_pairs = self.get_uv_pairs_from_selected_faces()
 
         if not uv_pairs:
@@ -505,7 +539,7 @@ class EUVDrawer(EDrawableObjectController):
         )
 
         if result:
-            print("[eTrim] Fit selected UV faces into box:", box.name)
+            print("[eTrim] Split and fit selected UV faces into box:", box.name)
 
         return result
 
@@ -632,6 +666,10 @@ class EUVDrawer(EDrawableObjectController):
             print("[eTrim] Fit shell inside selected box:", box.name)
 
 
+    # -----------------------------------------------------
+    # Selection
+    # -----------------------------------------------------
+
     def select_faces_in_rect(self, rect, additive=False):
         """
         Select UV faces whose screen-space polygon bounds intersect the rectangle.
@@ -706,6 +744,106 @@ class EUVDrawer(EDrawableObjectController):
 
         self.viewer.update()
         return selected_count > 0
+
+    def select_shells_in_rect(self, rect, additive=False):
+        """
+        Select UV shells whose screen-space bounds intersect the rectangle.
+
+        Current behavior:
+        - shell selection mode only
+        - selects shells by bounding rect overlap
+        - viewer selection list owns selected keys
+        """
+
+        if not self.has_cache():
+            return False
+
+        if rect.isNull() or rect.width() < 2.0 or rect.height() < 2.0:
+            if not additive:
+                self.viewer.clear_drawable_selection()
+                self.active_shell = None
+                self.hover_shell = None
+                self.viewer.update()
+
+            return False
+
+        if not additive:
+            self.viewer.clear_drawable_selection()
+
+        selected_count = 0
+        last_shell_ref = None
+
+        cache = self.get_cache()
+
+        for mesh_data in cache.meshes:
+            for shell_data in mesh_data.shells:
+                shell_rect = self.get_shell_screen_bounds(
+                    mesh_data,
+                    shell_data
+                )
+
+                if shell_rect.isNull():
+                    continue
+
+                if not shell_rect.intersects(rect):
+                    continue
+
+                drawable_key = self.drawable_key_for_shell(
+                    mesh_data,
+                    shell_data
+                )
+
+                self.viewer.select_drawable(
+                    drawable_key,
+                    clear_previous=False
+                )
+
+                last_shell_ref = (
+                    mesh_data,
+                    shell_data
+                )
+
+                selected_count += 1
+
+        if last_shell_ref:
+            self.active_shell = last_shell_ref
+            self.hover_shell = last_shell_ref
+
+            self.active_face = None
+            self.hover_face = None
+
+            self.set_active_object(last_shell_ref)
+            self.set_hover_object(last_shell_ref)
+
+        print("[eTrim] Rect-selected UV shells:", selected_count)
+
+        self.viewer.update()
+        return selected_count > 0
+
+    def get_selected_face_indices_by_mesh(self):
+        """
+        Return:
+            {
+                mesh_data: set(face_index, ...)
+            }
+        """
+
+        result = {}
+
+        selected_keys = self.get_selected_face_keys()
+
+        for key in selected_keys:
+            mesh_data, face_index, face_uv_ids = self.get_face_from_drawable_key(key)
+
+            if not mesh_data:
+                continue
+
+            if mesh_data not in result:
+                result[mesh_data] = set()
+
+            result[mesh_data].add(face_index)
+
+        return result
 
     # -----------------------------------------------------
     # Hit testing

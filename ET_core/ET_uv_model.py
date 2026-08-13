@@ -29,6 +29,8 @@ class EUVMeshUVData(object):
         # Editable viewer-side preview positions.
         # Native UVs are not modified until an explicit Apply step exists.
         self.preview_uv_positions = {}
+        self.preview_uv_original_ids = {}
+        self.next_preview_uv_id = 0
 
         # [(uv_id_a, uv_id_b), ...]
         self.edges = []
@@ -231,6 +233,17 @@ def build_mesh_uv_data(object_name, face_ids):
             mesh_data.adjacency[uv_b].add(uv_a)
 
     mesh_data.preview_uv_positions = dict(mesh_data.uv_positions)
+
+    mesh_data.preview_uv_original_ids = {}
+
+    for uv_id in mesh_data.uv_positions:
+        mesh_data.preview_uv_original_ids[uv_id] = uv_id
+
+    if mesh_data.preview_uv_positions:
+        mesh_data.next_preview_uv_id = max(mesh_data.preview_uv_positions.keys()) + 1
+    else:
+        mesh_data.next_preview_uv_id = 0
+
     build_shells(mesh_data)
 
     return mesh_data
@@ -241,7 +254,11 @@ def build_shells(mesh_data):
     Build UV shell islands from selected UV adjacency.
     """
 
-    remaining = set(mesh_data.uv_positions.keys())
+    remaining = set()
+
+    for face_uv_ids in mesh_data.faces:
+        for uv_id in face_uv_ids:
+            remaining.add(uv_id)
     shell_index = 0
 
     while remaining:
@@ -274,6 +291,159 @@ def build_shells(mesh_data):
 
         mesh_data.shells.append(shell)
 
+def ensure_preview_uv_storage(mesh_data):
+    """
+    Make sure preview UV dictionaries exist.
+
+    preview_uv_positions:
+        preview uv id -> (u, v)
+
+    preview_uv_original_ids:
+        preview uv id -> original Maya uv id
+
+    next_preview_uv_id:
+        fake preview ids allocated above original uv id range
+    """
+
+    if not hasattr(mesh_data, "preview_uv_positions"):
+        mesh_data.preview_uv_positions = dict(mesh_data.uv_positions)
+
+    if not hasattr(mesh_data, "preview_uv_original_ids"):
+        mesh_data.preview_uv_original_ids = {}
+
+        for uv_id in mesh_data.uv_positions:
+            mesh_data.preview_uv_original_ids[uv_id] = uv_id
+
+    if not hasattr(mesh_data, "next_preview_uv_id"):
+        if mesh_data.preview_uv_positions:
+            mesh_data.next_preview_uv_id = max(mesh_data.preview_uv_positions.keys()) + 1
+        else:
+            mesh_data.next_preview_uv_id = 0
+
+
+def allocate_preview_uv_id(mesh_data, source_uv_id):
+    """
+    Allocate a new preview UV id copied from an existing preview/original UV id.
+    """
+
+    ensure_preview_uv_storage(mesh_data)
+
+    new_uv_id = mesh_data.next_preview_uv_id
+    mesh_data.next_preview_uv_id += 1
+
+    if source_uv_id in mesh_data.preview_uv_positions:
+        source_pos = mesh_data.preview_uv_positions[source_uv_id]
+    else:
+        source_pos = mesh_data.uv_positions[source_uv_id]
+
+    mesh_data.preview_uv_positions[new_uv_id] = source_pos
+
+    if source_uv_id in mesh_data.preview_uv_original_ids:
+        mesh_data.preview_uv_original_ids[new_uv_id] = mesh_data.preview_uv_original_ids[source_uv_id]
+    else:
+        mesh_data.preview_uv_original_ids[new_uv_id] = source_uv_id
+
+    return new_uv_id
+
+
+def rebuild_preview_topology(mesh_data):
+    """
+    Rebuild edges, adjacency, and shells from mesh_data.faces.
+
+    This is needed after preview UV ids are split/remapped.
+    """
+
+    mesh_data.edges = []
+    mesh_data.adjacency = defaultdict(set)
+    mesh_data.shells = []
+
+    unique_edges = set()
+
+    for face_uv_ids in mesh_data.faces:
+        for i, uv_a in enumerate(face_uv_ids):
+            uv_b = face_uv_ids[(i + 1) % len(face_uv_ids)]
+
+            edge_key = tuple(sorted((uv_a, uv_b)))
+
+            if edge_key not in unique_edges:
+                unique_edges.add(edge_key)
+                mesh_data.edges.append((uv_a, uv_b))
+
+            mesh_data.adjacency[uv_a].add(uv_b)
+            mesh_data.adjacency[uv_b].add(uv_a)
+
+    build_shells(mesh_data)
+
+
+def split_faces_to_preview_shell(mesh_data, face_indices):
+    """
+    Split selected faces into their own preview UV island.
+
+    This does NOT touch Maya.
+
+    Only UV ids shared with unselected faces are duplicated.
+    This prevents selected faces from pulling the original shell while keeping
+    selected faces internally connected.
+    """
+
+    if not face_indices:
+        return False
+
+    ensure_preview_uv_storage(mesh_data)
+
+    selected_face_indices = set(face_indices)
+
+    # Find UV ids used by unselected faces.
+    outside_uv_ids = set()
+
+    for face_index, face_uv_ids in enumerate(mesh_data.faces):
+        if face_index in selected_face_indices:
+            continue
+
+        for uv_id in face_uv_ids:
+            outside_uv_ids.add(uv_id)
+
+    # old preview uv id -> duplicated preview uv id
+    duplicated_uv_ids = {}
+
+    did_split = False
+
+    for face_index in sorted(selected_face_indices):
+        if face_index < 0:
+            continue
+
+        if face_index >= len(mesh_data.faces):
+            continue
+
+        face_uv_ids = mesh_data.faces[face_index]
+        new_face_uv_ids = []
+
+        for old_uv_id in face_uv_ids:
+            # Only duplicate if this UV is shared with faces outside selection.
+            if old_uv_id in outside_uv_ids:
+                if old_uv_id not in duplicated_uv_ids:
+                    duplicated_uv_ids[old_uv_id] = allocate_preview_uv_id(
+                        mesh_data,
+                        old_uv_id
+                    )
+
+                new_face_uv_ids.append(
+                    duplicated_uv_ids[old_uv_id]
+                )
+
+                did_split = True
+
+            else:
+                # Keep internal selected-face UVs shared.
+                new_face_uv_ids.append(old_uv_id)
+
+        # Mutate in place so face_index based selection remains valid.
+        face_uv_ids[:] = new_face_uv_ids
+
+    if did_split:
+        rebuild_preview_topology(mesh_data)
+
+    return True
 
 def build_cache_from_selection():
     """

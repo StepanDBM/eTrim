@@ -113,6 +113,22 @@ class ETrimViewer(QtWidgets.QWidget):
             event.modifiers() & QtCore.Qt.ShiftModifier
         )
 
+    def get_uv_selection_mode(self):
+        if not self.uv_drawer:
+            return "shell"
+
+        return getattr(
+            self.uv_drawer,
+            "selection_mode",
+            "shell"
+        )
+
+
+    def is_uv_selection_mode(self):
+        return self.get_uv_selection_mode() in (
+            "shell",
+            "face"
+        )
 
     def is_uv_face_selection_mode(self):
         if not self.uv_drawer:
@@ -162,11 +178,20 @@ class ETrimViewer(QtWidgets.QWidget):
         self.rect_select_start = None
         self.rect_select_current = None
 
-        if self.uv_drawer and hasattr(self.uv_drawer, "select_faces_in_rect"):
-            self.uv_drawer.select_faces_in_rect(
-                rect,
-                additive=self.rect_select_additive
-            )
+        if self.uv_drawer:
+            mode = self.get_uv_selection_mode()
+
+            if mode == "face" and hasattr(self.uv_drawer, "select_faces_in_rect"):
+                self.uv_drawer.select_faces_in_rect(
+                    rect,
+                    additive=self.rect_select_additive
+                )
+
+            elif mode == "shell" and hasattr(self.uv_drawer, "select_shells_in_rect"):
+                self.uv_drawer.select_shells_in_rect(
+                    rect,
+                    additive=self.rect_select_additive
+                )
 
         self.rect_select_additive = False
         self.setCursor(QtCore.Qt.ArrowCursor)
@@ -296,6 +321,24 @@ class ETrimViewer(QtWidgets.QWidget):
         if self.zoom == 420.0 and self.pan == QtCore.QPointF(80.0, 430.0):
             self.frame_01()
 
+    def is_box_handle_under_mouse(self, pos):
+        """
+        Return True only if the mouse is over a box resize handle/edge.
+
+        Box handles should have priority over UVs.
+        Box bodies should NOT have priority over UVs.
+        """
+
+        if not self.box_drawer:
+            return False
+
+        box_id, handle = self.box_drawer.hit_test_box_handle(pos)
+
+        if not box_id:
+            return False
+
+        return handle != self.box_drawer.HANDLE_BODY
+
     def mouseMoveEvent(self, event):
         pos = event.pos()
 
@@ -310,24 +353,40 @@ class ETrimViewer(QtWidgets.QWidget):
             self.update()
             return
 
-        active_drawer = self.get_active_drawer()
+        # Ongoing box interaction always wins.
+        if self.box_drawer:
+            if (
+                getattr(self.box_drawer, "is_dragging_box", False) or
+                getattr(self.box_drawer, "is_resizing", False)
+            ):
+                if self.box_drawer.mouse_move_event(event):
+                    return
 
-        if active_drawer:
-            if active_drawer.mouse_move_event(event):
+        # Ongoing UV interaction always wins.
+        if self.uv_drawer:
+            if (
+                getattr(self.uv_drawer, "is_dragging_shell", False) or
+                getattr(self.uv_drawer, "is_dragging_face", False)
+            ):
+                if self.uv_drawer.mouse_move_event(event):
+                    return
+
+        # Box handles get priority so boxes remain resizable.
+        if self.is_box_handle_under_mouse(pos):
+            if self.box_drawer.mouse_move_event(event):
                 return
 
-            # Important:
-            # If something is selected, do not allow other drawers to hover.
-            return
-
-        if self.box_drawer.mouse_move_event(event):
-            return
-
+        # UVs are the main event.
         if hasattr(self.uv_drawer, "mouse_move_event"):
             if self.uv_drawer.mouse_move_event(event):
                 return
 
+        # Box body hover only if no UV took the hover.
+        if self.box_drawer.mouse_move_event(event):
+            return
+
         super(ETrimViewer, self).mouseMoveEvent(event)
+
 
     def mousePressEvent(self, event):
         pos = event.pos()
@@ -338,29 +397,34 @@ class ETrimViewer(QtWidgets.QWidget):
             self.setCursor(QtCore.Qt.ClosedHandCursor)
             return
 
-        # Press is allowed to change selection no matter what was selected before.
+        # Box handles first, so resizing boxes is still possible.
+        if self.is_box_handle_under_mouse(pos):
+            if self.box_drawer.mouse_press_event(event):
+                if event.button() == QtCore.Qt.LeftButton:
+                    if self.uv_drawer and hasattr(self.uv_drawer, "deselect"):
+                        self.uv_drawer.deselect()
+                return
+
+        # UVs / shells / faces are the main interaction target.
+        if hasattr(self.uv_drawer, "mouse_press_event"):
+            if self.uv_drawer.mouse_press_event(event):
+                if event.button() == QtCore.Qt.LeftButton:
+                    if self.box_drawer and hasattr(self.box_drawer, "deselect"):
+                        self.box_drawer.deselect()
+
+                self.setCursor(QtCore.Qt.SizeAllCursor)
+                return
+
+        # Box body only after UVs fail.
         if self.box_drawer.mouse_press_event(event):
-            # Left-click box changes selection focus.
-            # Right-click box opens menu and must preserve selected UV faces.
             if event.button() == QtCore.Qt.LeftButton:
                 if self.uv_drawer and hasattr(self.uv_drawer, "deselect"):
                     self.uv_drawer.deselect()
-
             return
 
-        if hasattr(self.uv_drawer, "mouse_press_event"):
-            if self.uv_drawer.mouse_press_event(event):
-                # UV won this press, so box selection must stop being active.
-                if self.box_drawer and hasattr(self.box_drawer, "deselect"):
-                    self.box_drawer.deselect()
-
-                # Restore UV drag cursor because box deselect may set ArrowCursor.
-                self.setCursor(QtCore.Qt.SizeAllCursor)
-
-                return
-
+        # Empty click-drag starts rectangle selection in shell or face mode.
         if event.button() == QtCore.Qt.LeftButton:
-            if self.is_uv_face_selection_mode():
+            if self.is_uv_selection_mode():
                 self.begin_rect_selection(
                     pos,
                     additive=self.is_shift_modifier(event)
@@ -377,19 +441,29 @@ class ETrimViewer(QtWidgets.QWidget):
             if self.is_rect_selecting:
                 self.end_rect_selection()
                 return
+
         if event.button() == QtCore.Qt.MiddleButton:
             self.is_panning = False
             self.setCursor(QtCore.Qt.ArrowCursor)
             return
 
-        active_drawer = self.get_active_drawer()
+        # Finish box interactions first if one is active.
+        if self.box_drawer:
+            if (
+                getattr(self.box_drawer, "is_dragging_box", False) or
+                getattr(self.box_drawer, "is_resizing", False)
+            ):
+                if self.box_drawer.mouse_release_event(event):
+                    return
 
-        if active_drawer:
-            if active_drawer.mouse_release_event(event):
-                return
-
-            # Do not route release to other drawers while something is active.
-            return
+        # Finish UV interactions if one is active.
+        if self.uv_drawer:
+            if (
+                getattr(self.uv_drawer, "is_dragging_shell", False) or
+                getattr(self.uv_drawer, "is_dragging_face", False)
+            ):
+                if self.uv_drawer.mouse_release_event(event):
+                    return
 
         if self.box_drawer.mouse_release_event(event):
             return
