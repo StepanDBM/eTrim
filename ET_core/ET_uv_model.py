@@ -37,6 +37,9 @@ class EUVMeshUVData(object):
 
         # [[uv_id_0, uv_id_1, uv_id_2, ...], ...]
         self.faces = []
+        
+        # face index in mesh_data.faces -> Maya polygon id
+        self.face_polygon_ids = []
 
         # uv_id -> set(connected uv ids)
         self.adjacency = defaultdict(set)
@@ -219,6 +222,7 @@ def build_mesh_uv_data(object_name, face_ids):
                 )
 
         mesh_data.faces.append(face_uv_ids)
+        mesh_data.face_polygon_ids.append(polygon_id)
 
         for i, uv_a in enumerate(face_uv_ids):
             uv_b = face_uv_ids[(i + 1) % len(face_uv_ids)]
@@ -444,6 +448,175 @@ def split_faces_to_preview_shell(mesh_data, face_indices):
         rebuild_preview_topology(mesh_data)
 
     return True
+
+def apply_preview_to_maya(uv_cache):
+    """
+    Apply viewer preview UVs back to Maya.
+
+    Supports:
+    - moved original UVs
+    - fitted UVs
+    - rotated UVs
+    - preview-split UV ids created by split_faces_to_preview_shell()
+
+    This function writes:
+    - new UV positions
+    - new UV ids for split face corners
+    - updated UV assignments for affected mesh faces
+    """
+
+    if not uv_cache or not uv_cache.has_data():
+        cmds.warning("[eTrim] No UV cache to apply.")
+        print("[eTrim] No UV cache to apply.")
+        return False
+
+    cmds.undoInfo(openChunk=True)
+
+    try:
+        applied_mesh_count = 0
+
+        for mesh_data in uv_cache.meshes:
+            if not mesh_data.preview_uv_positions:
+                continue
+
+            dag_path = get_mesh_dag_path(mesh_data.mesh_name)
+            mesh_fn = om.MFnMesh(dag_path)
+
+            uv_set = mesh_data.uv_set
+
+            # -------------------------------------------------
+            # Read current Maya UV arrays.
+            # -------------------------------------------------
+
+            current_u_array, current_v_array = mesh_fn.getUVs(uv_set)
+
+            new_u_values = [
+                float(value)
+                for value in current_u_array
+            ]
+
+            new_v_values = [
+                float(value)
+                for value in current_v_array
+            ]
+
+            preview_to_maya_uv_id = {}
+
+            # -------------------------------------------------
+            # Build preview UV id -> actual Maya UV id mapping.
+            # Existing preview ids keep their original Maya id.
+            # New preview ids are appended as real Maya UVs.
+            # -------------------------------------------------
+
+            preview_uv_ids = sorted(mesh_data.preview_uv_positions.keys())
+
+            for preview_uv_id in preview_uv_ids:
+                u, v = mesh_data.preview_uv_positions[preview_uv_id]
+
+                original_uv_id = mesh_data.preview_uv_original_ids.get(
+                    preview_uv_id,
+                    preview_uv_id
+                )
+
+                if preview_uv_id < len(new_u_values):
+                    maya_uv_id = preview_uv_id
+
+                    new_u_values[maya_uv_id] = float(u)
+                    new_v_values[maya_uv_id] = float(v)
+
+                elif original_uv_id < len(new_u_values):
+                    maya_uv_id = len(new_u_values)
+
+                    new_u_values.append(float(u))
+                    new_v_values.append(float(v))
+
+                else:
+                    maya_uv_id = len(new_u_values)
+
+                    new_u_values.append(float(u))
+                    new_v_values.append(float(v))
+
+                preview_to_maya_uv_id[preview_uv_id] = maya_uv_id
+
+            # -------------------------------------------------
+            # Push UV position array.
+            # -------------------------------------------------
+
+            mesh_fn.setUVs(
+                om.MFloatArray(new_u_values),
+                om.MFloatArray(new_v_values),
+                uv_set
+            )
+
+            # -------------------------------------------------
+            # Rebuild UV assignment for the whole mesh.
+            # We preserve existing assignments for untouched faces,
+            # then override cached faces with preview topology.
+            # -------------------------------------------------
+
+            cached_face_map = {}
+
+            for local_face_index, polygon_id in enumerate(mesh_data.face_polygon_ids):
+                if local_face_index >= len(mesh_data.faces):
+                    continue
+
+                cached_face_map[polygon_id] = mesh_data.faces[local_face_index]
+
+            polygon_count = mesh_fn.numPolygons
+
+            uv_counts = []
+            uv_ids = []
+
+            for polygon_id in range(polygon_count):
+                vertex_count = mesh_fn.polygonVertexCount(polygon_id)
+                uv_counts.append(vertex_count)
+
+                if polygon_id in cached_face_map:
+                    preview_face_uv_ids = cached_face_map[polygon_id]
+
+                    for preview_uv_id in preview_face_uv_ids:
+                        maya_uv_id = preview_to_maya_uv_id.get(
+                            preview_uv_id,
+                            preview_uv_id
+                        )
+
+                        uv_ids.append(int(maya_uv_id))
+
+                else:
+                    for local_vertex_id in range(vertex_count):
+                        maya_uv_id = get_polygon_uv_id(
+                            mesh_fn,
+                            polygon_id,
+                            local_vertex_id,
+                            uv_set
+                        )
+
+                        uv_ids.append(int(maya_uv_id))
+
+            mesh_fn.assignUVs(
+                om.MIntArray(uv_counts),
+                om.MIntArray(uv_ids),
+                uv_set
+            )
+
+            mesh_fn.updateSurface()
+
+            applied_mesh_count += 1
+
+        print("[eTrim] Applied preview UVs to Maya.")
+        print("        meshes:", applied_mesh_count)
+
+        cmds.refresh()
+        return applied_mesh_count > 0
+
+    except Exception as exc:
+        cmds.warning("[eTrim] Failed to apply preview UVs to Maya.")
+        print("[eTrim] Failed to apply preview UVs to Maya:")
+        print(exc)
+        raise
+
+    finally:
+        cmds.undoInfo(closeChunk=True)
 
 def build_cache_from_selection():
     """

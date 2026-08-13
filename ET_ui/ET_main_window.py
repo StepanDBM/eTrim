@@ -135,15 +135,14 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         toolbar_layout.setSpacing(6)
 
         self.load_selection_btn = QtWidgets.QPushButton("Load Selected UVs")
-        self.uv_select_mode_btn = QtWidgets.QPushButton("Shells")
-        self.uv_select_mode_btn.setCheckable(True)
+        self.apply_btn = QtWidgets.QPushButton("Apply")
         self.create_box_btn = QtWidgets.QPushButton("Create Box")
         self.delete_box_btn = QtWidgets.QPushButton("Delete Box")
         self.clear_boxes_btn = QtWidgets.QPushButton("Clear")
         self.frame_btn = QtWidgets.QPushButton("Frame 0-1")
 
         toolbar_layout.addWidget(self.load_selection_btn)
-        toolbar_layout.addWidget(self.uv_select_mode_btn)
+        toolbar_layout.addWidget(self.apply_btn)
         toolbar_layout.addWidget(self.create_box_btn)
         toolbar_layout.addWidget(self.delete_box_btn)
         toolbar_layout.addWidget(self.clear_boxes_btn)
@@ -152,6 +151,28 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         toolbar_layout.addStretch()
 
         main_layout.addLayout(toolbar_layout)
+
+        # Selection filter toolbar
+        selection_toolbar_layout = QtWidgets.QHBoxLayout()
+        selection_toolbar_layout.setSpacing(6)
+
+        self.enable_uv_selection_btn = QtWidgets.QPushButton("UV Selection: ON")
+        self.enable_uv_selection_btn.setCheckable(True)
+        self.enable_uv_selection_btn.setChecked(True)
+
+        self.enable_box_selection_btn = QtWidgets.QPushButton("Box Selection: ON")
+        self.enable_box_selection_btn.setCheckable(True)
+        self.enable_box_selection_btn.setChecked(True)
+
+        self.uv_select_mode_btn = QtWidgets.QPushButton("Shells")
+        self.uv_select_mode_btn.setCheckable(True)
+
+        selection_toolbar_layout.addWidget(self.enable_uv_selection_btn)
+        selection_toolbar_layout.addWidget(self.enable_box_selection_btn)
+        selection_toolbar_layout.addWidget(self.uv_select_mode_btn)
+        selection_toolbar_layout.addStretch()
+
+        main_layout.addLayout(selection_toolbar_layout)
 
         # Info label
         self.info_label = QtWidgets.QLabel()
@@ -165,6 +186,7 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
     def create_connections(self):
         self.load_selection_btn.clicked.connect(self.load_selected_uvs)
         self.uv_select_mode_btn.clicked.connect(self.toggle_uv_select_mode)
+        self.apply_btn.clicked.connect(self.apply_preview)
         self.create_box_btn.clicked.connect(self.create_box)
         self.delete_box_btn.clicked.connect(self.delete_box)
         self.clear_boxes_btn.clicked.connect(self.clear_boxes)
@@ -172,6 +194,9 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         self.viewer.boxesChanged.connect(self.refresh_info)
 
         self.viewer.activeBoxChanged.connect(self.on_active_box_changed)
+
+        self.enable_uv_selection_btn.clicked.connect(self.toggle_uv_selection_enabled)
+        self.enable_box_selection_btn.clicked.connect(self.toggle_box_selection_enabled)
 
     # -----------------------------------------------------
     # Actions
@@ -197,6 +222,24 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
             self.viewer.uv_drawer.set_selection_mode("shell")
 
         self.viewer.update()
+
+    def apply_preview(self):
+        """
+        Apply viewer preview UVs back to Maya.
+        """
+
+        if not self.viewer.uv_cache:
+            print("[eTrim] No loaded UV cache to apply.")
+            return
+
+        result = ET_uv_model.apply_preview_to_maya(
+            self.viewer.uv_cache
+        )
+
+        if result:
+            print("[eTrim] Apply complete.")
+        else:
+            print("[eTrim] Nothing was applied.")
 
     def create_box(self):
         box = self.model.create_box()
@@ -253,6 +296,26 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
 
         self.info_label.setText(text)
 
+    def toggle_uv_selection_enabled(self):
+        enabled = self.enable_uv_selection_btn.isChecked()
+
+        if enabled:
+            self.enable_uv_selection_btn.setText("UV Selection: ON")
+        else:
+            self.enable_uv_selection_btn.setText("UV Selection: OFF")
+
+        self.viewer.set_uv_selection_enabled(enabled)
+
+
+    def toggle_box_selection_enabled(self):
+        enabled = self.enable_box_selection_btn.isChecked()
+
+        if enabled:
+            self.enable_box_selection_btn.setText("Box Selection: ON")
+        else:
+            self.enable_box_selection_btn.setText("Box Selection: OFF")
+
+        self.viewer.set_box_selection_enabled(enabled)
     # -----------------------------------------------------
     # Close
     # -----------------------------------------------------

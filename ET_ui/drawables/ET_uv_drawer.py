@@ -505,6 +505,85 @@ class EUVDrawer(EDrawableObjectController):
             box
         )
 
+    def fit_each_selected_shell_to_box(self, box):
+        """
+        Fit each selected UV shell individually into one trim box.
+
+        Unlike fit_selected_shells_to_box(), this does not preserve relative
+        layout between selected shells. Each shell fills the target box by itself.
+        """
+
+        if not box:
+            return False
+
+        selected_shell_keys = self.get_selected_shell_keys()
+
+        if not selected_shell_keys:
+            return False
+
+        fitted_count = 0
+
+        for shell_key in selected_shell_keys:
+            mesh_data, shell_data = self.get_shell_from_drawable_key(shell_key)
+
+            if not mesh_data or not shell_data:
+                continue
+
+            uv_pairs = self.get_uv_pairs_from_shell(
+                mesh_data,
+                shell_data
+            )
+
+            if not uv_pairs:
+                continue
+
+            if self.fit_uv_pairs_to_box(
+                uv_pairs,
+                box
+            ):
+                fitted_count += 1
+
+        if fitted_count:
+            print(
+                "[eTrim] Fit each selected UV shell into box: {} | shells: {}".format(
+                    box.name,
+                    fitted_count
+                )
+            )
+
+        return fitted_count > 0
+
+    def fit_selected_shells_to_box(self, box):
+        """
+        Fit currently selected UV shells into one trim box.
+
+        Uses viewer.selected_drawables.
+        Preview only.
+
+        Multiple selected shells are fitted together as one group,
+        preserving their relative layout.
+        """
+
+        if not box:
+            return False
+
+        uv_pairs = self.get_uv_pairs_from_selected_drawables(
+            "uv_shell"
+        )
+
+        if not uv_pairs:
+            return False
+
+        result = self.fit_uv_pairs_to_box(
+            uv_pairs,
+            box
+        )
+
+        if result:
+            print("[eTrim] Fit selected UV shells into box:", box.name)
+
+        return result
+
     def fit_selected_faces_to_box(self, box):
         """
         Split selected UV faces into their own preview island,
@@ -724,21 +803,15 @@ class EUVDrawer(EDrawableObjectController):
         menu.addSeparator()
 
         fit_inside_selected_box_action = menu.addAction("Fit Inside Selected Box")
-        fit_inside_selected_box_action.triggered.connect(
-            lambda: self.fit_shell_inside_selected_box(shell_ref)
-        )
+        fit_inside_selected_box_action.triggered.connect(lambda: self.fit_shell_inside_selected_box(shell_ref))
 
         menu.addSeparator()
 
         rotate_90_action = menu.addAction("Rotate 90 Clockwise")
-        rotate_90_action.triggered.connect(
-            lambda: self.rotate_shell_clockwise_90(shell_ref)
-        )
+        rotate_90_action.triggered.connect(lambda: self.rotate_shell_clockwise_90(shell_ref))
 
         rotate_custom_action = menu.addAction("Rotate...")
-        rotate_custom_action.triggered.connect(
-            lambda: self.rotate_shell_arbitrary(shell_ref)
-        )
+        rotate_custom_action.triggered.connect(lambda: self.rotate_shell_arbitrary(shell_ref))
 
         return menu
 

@@ -565,6 +565,9 @@ class EBoxDrawer(EDrawableObjectController):
         fit_selected_uvs_action = menu.addAction("Fit Selected UVs In Me")
         fit_selected_uvs_action.triggered.connect(lambda: self.fit_selected_uvs_in_box(box_id))
 
+        fit_each_selected_shell_action = menu.addAction("Fit Each Selected Shell In Me")
+        fit_each_selected_shell_action.triggered.connect(lambda: self.fit_each_selected_shell_in_box(box_id))
+
         rename_action = menu.addAction("Rename")
         rename_action.triggered.connect(lambda: self.rename_box(box_id))
 
@@ -683,7 +686,15 @@ class EBoxDrawer(EDrawableObjectController):
             print("[eTrim] Fit selected UV faces inside box:", box.name)
             return
 
-        # 2. Second priority: active shell.
+        # 2. Second priority: selected UV shells.
+        if hasattr(self.viewer.uv_drawer, "fit_selected_shells_to_box"):
+            result = self.viewer.uv_drawer.fit_selected_shells_to_box(box)
+
+        if result:
+            print("[eTrim] Fit selected UV shells inside box:", box.name)
+            return
+
+        # 3. Third priority: active shell.
         if hasattr(self.viewer.uv_drawer, "fit_active_shell_to_box"):
             result = self.viewer.uv_drawer.fit_active_shell_to_box(box)
 
@@ -691,7 +702,7 @@ class EBoxDrawer(EDrawableObjectController):
             print("[eTrim] Fit active UV shell inside box:", box.name)
             return
 
-        # 3. Last fallback: whole loaded cache.
+        # 4. Last fallback: whole loaded cache.
         if hasattr(self.viewer.uv_drawer, "fit_cache_to_box"):
             result = self.viewer.uv_drawer.fit_cache_to_box(
                 self.viewer.uv_cache,
@@ -703,6 +714,28 @@ class EBoxDrawer(EDrawableObjectController):
         else:
             print("[eTrim] No selected/active/loaded UVs to fit into box:", box.name)
 
+
+    def fit_each_selected_shell_in_box(self, box_id):
+        box = self.model().get_box(box_id)
+
+        if not box:
+            return
+
+        if not self.viewer.uv_drawer:
+            return
+
+        if not hasattr(self.viewer.uv_drawer, "fit_each_selected_shell_to_box"):
+            print("[eTrim] fit_each_selected_shell_to_box is not available.")
+            return
+
+        result = self.viewer.uv_drawer.fit_each_selected_shell_to_box(
+            box
+        )
+
+        if result:
+            print("[eTrim] Fit each selected shell inside box:", box.name)
+        else:
+            print("[eTrim] No selected UV shells to fit individually into box:", box.name)
     # -----------------------------------------------------
     # Event routing
     # -----------------------------------------------------
