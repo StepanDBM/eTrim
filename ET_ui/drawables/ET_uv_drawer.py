@@ -9,6 +9,8 @@ except ImportError:
 
 from ET_ui.drawables.ET_drawable_object import EDrawableObjectController
 from ET_core import ET_uv_model
+from ET_core import ET_uv_unwrap
+from ET_core import ET_gridify
 
 class EUVDrawer(EDrawableObjectController):
     """
@@ -1219,24 +1221,47 @@ class EUVDrawer(EDrawableObjectController):
             mesh_data.uv_set,
             shell_data.shell_id
         )
-    def build_context_menu(self, shell_ref):
-        menu = super(EUVDrawer, self).build_context_menu(shell_ref)
-
-        if not self.is_shell_ref(shell_ref):
-            return menu
+    
+    def build_context_menu(self, uv_ref):
+        menu = super(EUVDrawer, self).build_context_menu(uv_ref)
 
         menu.addSeparator()
 
-        fit_inside_selected_box_action = menu.addAction("Fit Inside Selected Box")
-        fit_inside_selected_box_action.triggered.connect(lambda: self.fit_shell_inside_selected_box(shell_ref))
+        unwrap_selected_action = menu.addAction("Native Unwrap Selected UVs")
+        unwrap_selected_action.triggered.connect(
+            self.native_unwrap_selected_uvs
+        )
 
-        menu.addSeparator()
+        gridify_selected_action = menu.addAction("Gridify Selected UVs")
+        gridify_selected_action.triggered.connect(
+            self.gridify_selected_uvs
+        )
 
-        rotate_90_action = menu.addAction("Rotate 90 Clockwise")
-        rotate_90_action.triggered.connect(lambda: self.rotate_shell_clockwise_90(shell_ref))
+        unwrap_gridify_action = menu.addAction("Native Unwrap + Gridify")
+        unwrap_gridify_action.triggered.connect(
+            self.native_unwrap_and_gridify_selected_uvs
+        )
 
-        rotate_custom_action = menu.addAction("Rotate...")
-        rotate_custom_action.triggered.connect(lambda: self.rotate_shell_arbitrary(shell_ref)   )
+        # Shell-only actions.
+        if self.is_shell_ref(uv_ref):
+            menu.addSeparator()
+
+            fit_inside_selected_box_action = menu.addAction("Fit Inside Selected Box")
+            fit_inside_selected_box_action.triggered.connect(
+                lambda: self.fit_shell_inside_selected_box(uv_ref)
+            )
+
+            menu.addSeparator()
+
+            rotate_90_action = menu.addAction("Rotate 90 Clockwise")
+            rotate_90_action.triggered.connect(
+                lambda: self.rotate_shell_clockwise_90(uv_ref)
+            )
+
+            rotate_custom_action = menu.addAction("Rotate...")
+            rotate_custom_action.triggered.connect(
+                lambda: self.rotate_shell_arbitrary(uv_ref)
+            )
 
         return menu
 
@@ -1356,6 +1381,76 @@ class EUVDrawer(EDrawableObjectController):
         if result:
             print("[eTrim] Fit shell inside selected box:", box.name)
 
+    def native_unwrap_selected_uvs(self):
+        """
+        Run Maya native unwrap on selected viewer UVs and write result to preview.
+        """
+
+        if not self.viewer:
+            return
+
+        result = ET_uv_unwrap.unwrap_viewer_selection_to_preview(
+            self.viewer,
+            iterations=1,
+            pack=False
+        )
+
+        if result:
+            print("[eTrim] Native unwrap selected UVs complete.")
+        else:
+            print("[eTrim] Native unwrap selected UVs failed or did nothing.")
+
+        self.viewer.update()
+
+
+    def gridify_selected_uvs(self):
+        """
+        Gridify selected viewer UVs into preview UV positions.
+        """
+
+        if not self.viewer:
+            return
+
+        result = ET_gridify.gridify_viewer_selection_to_preview(
+            self.viewer
+        )
+
+        if result:
+            print("[eTrim] Gridify selected UVs complete.")
+        else:
+            print("[eTrim] Gridify selected UVs failed or did nothing.")
+
+        self.viewer.update()
+
+
+    def native_unwrap_and_gridify_selected_uvs(self):
+        """
+        Native unwrap selected viewer UVs, then gridify the result.
+        """
+
+        if not self.viewer:
+            return
+
+        unwrap_result = ET_uv_unwrap.unwrap_viewer_selection_to_preview(
+            self.viewer,
+            iterations=1,
+            pack=False
+        )
+
+        if not unwrap_result:
+            print("[eTrim] Native unwrap failed. Gridify skipped.")
+            return
+
+        gridify_result = ET_gridify.gridify_viewer_selection_to_preview(
+            self.viewer
+        )
+
+        if gridify_result:
+            print("[eTrim] Native unwrap + gridify complete.")
+        else:
+            print("[eTrim] Native unwrap complete, but gridify did nothing.")
+
+        self.viewer.update()
 
     # -----------------------------------------------------
     # Selection

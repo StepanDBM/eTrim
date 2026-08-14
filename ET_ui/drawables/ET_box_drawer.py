@@ -6,6 +6,8 @@ except ImportError:
     from PySide6 import QtCore, QtGui, QtWidgets
 
 from ET_ui.drawables.ET_drawable_object import EDrawableObjectController
+from ET_core import ET_uv_unwrap
+from ET_core import ET_gridify
 
 
 class EBoxDrawer(EDrawableObjectController):
@@ -748,6 +750,17 @@ class EBoxDrawer(EDrawableObjectController):
         fit_each_selected_shell_action = menu.addAction("Fit Each Selected Shell In Me")
         fit_each_selected_shell_action.triggered.connect(lambda: self.fit_each_selected_shell_in_box(box_id))
 
+        menu.addSeparator()
+
+        gridify_fit_action = menu.addAction("Gridify + Fit In Me")
+        gridify_fit_action.triggered.connect(lambda: self.gridify_and_fit_in_box(box_id))
+
+        unwrap_and_fit_action = menu.addAction("Native Unwrap + Fit In Me")
+        unwrap_and_fit_action.triggered.connect(lambda: self.native_unwrap_and_fit_in_box(box_id))
+
+        unwrap_gridify_fit_action = menu.addAction("Native Unwrap + Gridify + Fit In Me")
+        unwrap_gridify_fit_action.triggered.connect(lambda: self.native_unwrap_gridify_and_fit_in_box(box_id))
+
         box = self.model().get_box(box_id)
         menu.addSeparator()
         fit_mode_menu = menu.addMenu("Fit Mode")
@@ -986,6 +999,104 @@ class EBoxDrawer(EDrawableObjectController):
             print("[eTrim] Fit each selected shell inside box:", box.name)
         else:
             print("[eTrim] No selected UV shells to fit individually into box:", box.name)
+
+    def gridify_and_fit_in_box(self, box_id):
+        """
+        Gridify selected viewer UVs, then fit result into this box.
+        """
+
+        box = self.model().get_box(
+            box_id
+        )
+
+        if not box:
+            return
+
+        if not self.viewer:
+            return
+
+        gridify_result = ET_gridify.gridify_viewer_selection_to_preview(
+            self.viewer
+        )
+
+        if not gridify_result:
+            print("[eTrim] Gridify failed. Fit skipped.")
+            return
+
+        self.fit_selected_uvs_in_box(
+            box_id
+        )
+
+        print("[eTrim] Gridify + fit complete:", box.name)
+
+    def native_unwrap_and_fit_in_box(self, box_id):
+        """
+        Native unwrap selected viewer UVs, then fit result into this box.
+        """
+
+        box = self.model().get_box(box_id)
+
+        if not box:
+            return
+
+        if not self.viewer:
+            return
+
+        result = ET_uv_unwrap.unwrap_viewer_selection_to_preview(
+            self.viewer,
+            iterations=1,
+            pack=False
+        )
+
+        if not result:
+            print("[eTrim] Native unwrap failed. Fit skipped.")
+            return
+
+        self.fit_selected_uvs_in_box(
+            box_id
+        )
+
+        print("[eTrim] Native unwrap + fit complete:", box.name)
+
+    # Gridify methods
+    def native_unwrap_gridify_and_fit_in_box(self, box_id):
+        """
+        Native unwrap selected viewer UVs, gridify result, then fit into this box.
+        """
+
+        box = self.model().get_box(
+            box_id
+        )
+
+        if not box:
+            return
+
+        if not self.viewer:
+            return
+
+        unwrap_result = ET_uv_unwrap.unwrap_viewer_selection_to_preview(
+            self.viewer,
+            iterations=1,
+            pack=False
+        )
+
+        if not unwrap_result:
+            print("[eTrim] Native unwrap failed. Gridify + fit skipped.")
+            return
+
+        gridify_result = ET_gridify.gridify_viewer_selection_to_preview(
+            self.viewer
+        )
+
+        if not gridify_result:
+            print("[eTrim] Gridify failed. Fit skipped.")
+            return
+
+        self.fit_selected_uvs_in_box(
+            box_id
+        )
+
+        print("[eTrim] Native unwrap + gridify + fit complete:", box.name)
 
     def select_boxes_in_rect(self, rect, additive=False, subtractive=False):
         """
