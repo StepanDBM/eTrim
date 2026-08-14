@@ -1519,12 +1519,9 @@ class EUVDrawer(EDrawableObjectController):
         uv_pairs = []
 
         if key and self.viewer.is_drawable_selected(key):
-            if mode == self.MODE_VERTEX:
-                uv_pairs = self.prepare_selected_vertices_for_preview_edit()
-            else:
-                uv_pairs = self.get_uv_pairs_from_selected_drawables(
-                    key[0]
-                )
+            uv_pairs = self.get_uv_pairs_from_selected_drawables(
+                key[0]
+            )
         else:
             uv_pairs = self.get_uv_pairs_from_ref(
                 mode,
@@ -1662,6 +1659,114 @@ class EUVDrawer(EDrawableObjectController):
     # -----------------------------------------------------
     # Fit
     # -----------------------------------------------------
+
+    def detach_selected_faces(self):
+        """
+        Explicitly detach currently selected faces into their own preview shell.
+
+        This is only intended for Face mode.
+        """
+
+        selected_by_mesh = self.get_selected_face_indices_by_mesh()
+
+        if not selected_by_mesh:
+            print("[eTrim] No selected faces to detach.")
+            return False
+
+        detached_count = 0
+
+        for mesh_data, face_indices in selected_by_mesh.items():
+            if ET_uv_model.split_faces_to_preview_shell(
+                mesh_data,
+                face_indices,
+                duplicate_all=True
+            ):
+                detached_count += len(face_indices)
+
+        if detached_count:
+            print("[eTrim] Detached selected faces:")
+            print("        faces:", detached_count)
+
+            self.viewer.update()
+            return True
+
+        print("[eTrim] Selected faces were already detached or could not be detached.")
+        return False
+
+
+    def get_complete_face_indices_from_selected_vertices_by_mesh(self):
+        """
+        Return complete face indices from the current vertex selection.
+
+        A face is complete only if all of its preview UV ids are selected.
+        """
+
+        selected_by_mesh = {}
+
+        for key in self.get_selected_vertex_keys():
+            mesh_data, uv_id = self.get_vertex_from_drawable_key(key)
+
+            if not mesh_data:
+                continue
+
+            if mesh_data not in selected_by_mesh:
+                selected_by_mesh[mesh_data] = set()
+
+            selected_by_mesh[mesh_data].add(uv_id)
+
+        result = {}
+
+        for mesh_data, selected_uv_ids in selected_by_mesh.items():
+            face_indices = ET_uv_model.get_complete_face_indices_from_uv_ids(
+                mesh_data,
+                selected_uv_ids
+            )
+
+            if face_indices:
+                result[mesh_data] = face_indices
+
+        return result
+
+
+    def detach_complete_faces_from_vertex_selection(self):
+        """
+        Explicitly detach complete faces described by selected vertices.
+
+        This is only intended for Vertex mode.
+
+        Example:
+            If all four UV vertices of a quad face are selected,
+            that face can be detached.
+
+            If only two vertices of a face are selected,
+            that face is not detached.
+        """
+
+        selected_by_mesh = self.get_complete_face_indices_from_selected_vertices_by_mesh()
+
+        if not selected_by_mesh:
+            print("[eTrim] No complete faces found from selected vertices.")
+            return False
+
+        detached_count = 0
+
+        for mesh_data, face_indices in selected_by_mesh.items():
+            if ET_uv_model.split_faces_to_preview_shell(
+                mesh_data,
+                face_indices,
+                duplicate_all=True
+            ):
+                detached_count += len(face_indices)
+
+        if detached_count:
+            print("[eTrim] Detached complete faces from vertex selection:")
+            print("        faces:", detached_count)
+
+            self.viewer.update()
+            return True
+
+        print("[eTrim] Vertex-selected complete faces were already detached or could not be detached.")
+        return False
 
     def normalize_fit_mode(self, fit_mode):
         if fit_mode in self.VALID_FIT_MODES:
@@ -2114,39 +2219,39 @@ class EUVDrawer(EDrawableObjectController):
         menu.addSeparator()
 
         unwrap_selected_action = menu.addAction("Native Unwrap Selected UVs")
-        unwrap_selected_action.triggered.connect(
-            self.native_unwrap_selected_uvs
-        )
+        unwrap_selected_action.triggered.connect(self.native_unwrap_selected_uvs)
 
         gridify_selected_action = menu.addAction("Gridify Selected UVs")
-        gridify_selected_action.triggered.connect(
-            self.gridify_selected_uvs
-        )
+        gridify_selected_action.triggered.connect(self.gridify_selected_uvs)
 
         unwrap_gridify_action = menu.addAction("Native Unwrap + Gridify")
-        unwrap_gridify_action.triggered.connect(
-            self.native_unwrap_and_gridify_selected_uvs
-        )
+        unwrap_gridify_action.triggered.connect(self.native_unwrap_and_gridify_selected_uvs)
+
+        if self.selection_mode == self.MODE_FACE:
+            menu.addSeparator()
+
+            detach_faces_action = menu.addAction("Detach Selected Faces")
+            detach_faces_action.triggered.connect(self.detach_selected_faces)
+
+        elif self.selection_mode == self.MODE_VERTEX:
+            menu.addSeparator()
+
+            detach_vertex_faces_action = menu.addAction("Detach Complete Faces From Vertex Selection")
+            detach_vertex_faces_action.triggered.connect(self.detach_complete_faces_from_vertex_selection)
 
         if self.is_shell_ref(uv_ref):
             menu.addSeparator()
 
             fit_inside_selected_box_action = menu.addAction("Fit Inside Selected Box")
-            fit_inside_selected_box_action.triggered.connect(
-                lambda: self.fit_shell_inside_selected_box(uv_ref)
-            )
+            fit_inside_selected_box_action.triggered.connect(lambda: self.fit_shell_inside_selected_box(uv_ref))
 
             menu.addSeparator()
 
             rotate_90_action = menu.addAction("Rotate 90 Clockwise")
-            rotate_90_action.triggered.connect(
-                lambda: self.rotate_shell_clockwise_90(uv_ref)
-            )
+            rotate_90_action.triggered.connect(lambda: self.rotate_shell_clockwise_90(uv_ref))
 
             rotate_custom_action = menu.addAction("Rotate...")
-            rotate_custom_action.triggered.connect(
-                lambda: self.rotate_shell_arbitrary(uv_ref)
-            )
+            rotate_custom_action.triggered.connect(lambda: self.rotate_shell_arbitrary(uv_ref))
 
         return menu
 
@@ -2167,10 +2272,7 @@ class EUVDrawer(EDrawableObjectController):
         if key:
             self.viewer.deselect_drawable_key(key)
 
-        self.clear_ref_if_matches(
-            mode,
-            uv_ref
-        )
+        self.clear_ref_if_matches(mode, uv_ref)
 
         self.viewer.update()
 

@@ -521,7 +521,7 @@ def prepare_vertex_uvs_for_preview_edit(mesh_data, selected_uv_ids):
 
     return uv_pairs
 
-def split_faces_to_preview_shell(mesh_data, face_indices):
+def split_faces_to_preview_shell(mesh_data, face_indices, duplicate_all=False):
     """
     Split selected faces into their own preview UV island.
 
@@ -565,8 +565,9 @@ def split_faces_to_preview_shell(mesh_data, face_indices):
         new_face_uv_ids = []
 
         for old_uv_id in face_uv_ids:
-            # Only duplicate if this UV is shared with faces outside selection.
-            if old_uv_id in outside_uv_ids:
+            should_duplicate = (duplicate_all or old_uv_id in outside_uv_ids)
+
+            if should_duplicate:
                 if old_uv_id not in duplicated_uv_ids:
                     duplicated_uv_ids[old_uv_id] = allocate_preview_uv_id(
                         mesh_data,

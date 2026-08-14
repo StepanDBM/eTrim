@@ -9,6 +9,9 @@ except ImportError:
 MINIMUM_BUTTON_WIDTH = 70
 MINIMUM_BUTTON_HEIGHT = 22
 
+MINIMUM_SMALL_BUTTON_WIDTH = 30
+MINIMUM_SMALL_BUTTON_HEIGHT = 22
+
 # -----------------------------------------------------
 # eTrim palette
 # -----------------------------------------------------
@@ -242,6 +245,26 @@ def create_toggle_button(
     tooltip=None,
     minimum_width=MINIMUM_BUTTON_WIDTH,
     minimum_height=MINIMUM_BUTTON_HEIGHT
+):
+    button = QtWidgets.QPushButton(text)
+    button.setCheckable(True)
+    button.setChecked(checked)
+    button.setMinimumWidth(minimum_width)
+    button.setMinimumHeight(minimum_height)
+    button.setStyleSheet(TOGGLE_BUTTON_STYLE)
+
+    if tooltip:
+        button.setToolTip(tooltip)
+
+    return button
+
+
+def create_small_toggle_button(
+    text,
+    checked=False,
+    tooltip=None,
+    minimum_width=MINIMUM_SMALL_BUTTON_WIDTH,
+    minimum_height=MINIMUM_SMALL_BUTTON_HEIGHT
 ):
     button = QtWidgets.QPushButton(text)
     button.setCheckable(True)

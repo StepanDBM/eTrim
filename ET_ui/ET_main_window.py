@@ -202,42 +202,54 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
 
         # Left side: interaction toggles
         self.enable_uv_selection_btn = ET_style.create_toggle_button("UV Sel: ON",
-            checked=True,
-            tooltip="Enable or disable UV picking and UV interaction."
-        )
+            checked=True, tooltip="Enable or disable UV picking and UV interaction.")
 
         self.enable_box_selection_btn = ET_style.create_toggle_button("Box Sel: ON",
-            checked=True,
-            tooltip="Enable or disable box picking and box interaction."
-        )
+            checked=True, tooltip="Enable or disable box picking and box interaction.")
 
-        self.uv_select_mode_btn = ET_style.create_toggle_button("On Shells",
-            tooltip="Toggle between shell selection and face selection."
-        )
+        self.uv_mode_shell_btn = ET_style.create_small_toggle_button("S",
+            checked=True, tooltip="Shell selection mode.")
+
+        self.uv_mode_face_btn = ET_style.create_small_toggle_button("F",
+            tooltip="Face selection mode.")
+
+        self.uv_mode_vertex_btn = ET_style.create_small_toggle_button("V",
+            tooltip="Vertex selection mode.")
+
+        self.uv_mode_group = QtWidgets.QButtonGroup(self)
+        self.uv_mode_group.setExclusive(True)
+
+        self.uv_mode_group.addButton(self.uv_mode_shell_btn)
+        self.uv_mode_group.addButton(self.uv_mode_face_btn)
+        self.uv_mode_group.addButton(self.uv_mode_vertex_btn)
+
+        uv_mode_layout = QtWidgets.QHBoxLayout()
+        uv_mode_layout.setContentsMargins(0, 0, 0, 0)
+        uv_mode_layout.setSpacing(2)
+
+        uv_mode_layout.addWidget(self.uv_mode_shell_btn)
+        uv_mode_layout.addWidget(self.uv_mode_face_btn)
+        uv_mode_layout.addWidget(self.uv_mode_vertex_btn)
 
         selection_toolbar_layout.addWidget(self.enable_uv_selection_btn)
         selection_toolbar_layout.addWidget(self.enable_box_selection_btn)
-        selection_toolbar_layout.addWidget(self.uv_select_mode_btn)
+        selection_toolbar_layout.addLayout(uv_mode_layout)
 
         # Spacer pushes save/load buttons to the right side.
         selection_toolbar_layout.addStretch()
 
         # Right side: storage buttons
         self.save_layout_btn = ET_style.create_action_button("Save .etrim",
-            tooltip="Save current eTrim layout to a .etrim file."
-        )
+            tooltip="Save current eTrim layout to a .etrim file.")
 
         self.load_layout_btn = ET_style.create_action_button("Load .etrim",
-            tooltip="Load an eTrim layout from a .etrim file."
-        )
+            tooltip="Load an eTrim layout from a .etrim file.")
 
         self.save_scene_layout_btn = ET_style.create_action_button("Save To Scene",
-            tooltip="Save current eTrim layout into the Maya scene."
-        )
+            tooltip="Save current eTrim layout into the Maya scene.")
 
         self.load_scene_layout_btn = ET_style.create_action_button("Load From Scene",
-            tooltip="Load eTrim layout from the Maya scene."
-        )
+            tooltip="Load eTrim layout from the Maya scene.")
 
         selection_toolbar_layout.addWidget(self.save_layout_btn)
         selection_toolbar_layout.addWidget(self.load_layout_btn)
@@ -263,7 +275,11 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
 
     def create_connections(self):
         self.load_selection_btn.clicked.connect(self.load_selected_uvs)
-        self.uv_select_mode_btn.clicked.connect(self.toggle_uv_select_mode)
+
+        self.uv_mode_shell_btn.clicked.connect(lambda: self.set_uv_select_mode("shell"))
+        self.uv_mode_face_btn.clicked.connect(lambda: self.set_uv_select_mode("face"))
+        self.uv_mode_vertex_btn.clicked.connect(lambda: self.set_uv_select_mode("vertex"))
+        
         self.backdrop_image_btn.clicked.connect(self.toggle_backdrop_image)
         self.backdrop_opacity_spin.valueChanged.connect(self.set_backdrop_opacity)
         self.apply_btn.clicked.connect(self.apply_preview)
@@ -349,24 +365,29 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         self.refresh_info()
         print("[eTrim] UV selection loaded into viewer.")
 
-    def toggle_uv_select_mode(self):
+    def set_uv_select_mode(self, mode):
         """
-        Cycle UV interaction between shell, face, and vertex selection.
+        Set UV interaction mode from the S/F/V button group.
         """
 
-        mode = self.viewer.get_uv_selection_mode()
+        if mode not in (
+            "shell",
+            "face",
+            "vertex"
+        ):
+            return
 
-        if mode == "shell":
-            self.uv_select_mode_btn.setText("Faces")
-            self.viewer.uv_drawer.set_selection_mode("face")
+        if not self.viewer:
+            return
 
-        elif mode == "face":
-            self.uv_select_mode_btn.setText("Vertices")
-            self.viewer.uv_drawer.set_selection_mode("vertex")
+        if not self.viewer.uv_drawer:
+            return
 
-        else:
-            self.uv_select_mode_btn.setText("Shells")
-            self.viewer.uv_drawer.set_selection_mode("shell")
+        self.viewer.uv_drawer.set_selection_mode(
+            mode
+        )
+
+        self.sync_uv_mode_buttons()
 
         self.viewer.update()
 
@@ -388,6 +409,25 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         else:
             print("[eTrim] Nothing was applied.")
 
+    def sync_uv_mode_buttons(self):
+        """
+        Sync S/F/V button checked states from viewer UV selection mode.
+        """
+
+        uv_mode = self.viewer.get_uv_selection_mode()
+
+        self.uv_mode_shell_btn.setChecked(
+            uv_mode == "shell"
+        )
+
+        self.uv_mode_face_btn.setChecked(
+            uv_mode == "face"
+        )
+
+        self.uv_mode_vertex_btn.setChecked(
+            uv_mode == "vertex"
+        )
+
     def sync_ui_from_viewer_state(self):
         """
         Sync UI button labels/check states from viewer state.
@@ -403,7 +443,9 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
                 True
             )
         )
-
+        self.uv_mode_shell_btn.setEnabled(uv_enabled)
+        self.uv_mode_face_btn.setEnabled(uv_enabled)
+        self.uv_mode_vertex_btn.setEnabled(uv_enabled)
         self.enable_uv_selection_btn.setChecked(uv_enabled)
 
         if uv_enabled:
@@ -426,14 +468,7 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         else:
             self.enable_box_selection_btn.setText("Box Sel: OFF")
 
-        uv_mode = self.viewer.get_uv_selection_mode()
-
-        if uv_mode == "face":
-            self.uv_select_mode_btn.setText("Faces")
-        elif uv_mode == "vertex":
-            self.uv_select_mode_btn.setText("Vertices")
-        else:
-            self.uv_select_mode_btn.setText("Shells")
+        self.sync_uv_mode_buttons()
 
     def save_layout_file(self):
         file_path, selected_filter = QtWidgets.QFileDialog.getSaveFileName(
@@ -578,6 +613,7 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
             self.enable_uv_selection_btn.setText("UV Sel: OFF")
 
         self.viewer.set_uv_selection_enabled(enabled)
+        self.sync_ui_from_viewer_state()
 
 
     def toggle_box_selection_enabled(self):
