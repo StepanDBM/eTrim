@@ -110,8 +110,8 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         self.model = get_model()
         self.setWindowTitle(self.WINDOW_TITLE)
 
-        self.setMinimumSize(700, 500)
         self.resize(700, 500)
+        self.gen_spacing = 10
 
         self.setWindowFlags(
             QtCore.Qt.Window |
@@ -138,9 +138,9 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         # -----------------------------------------------------
         # Top toolbar
         # -----------------------------------------------------
-        toolbar_layout = ET_style.create_toolbar_layout()
+        toolbar_layout = ET_style.create_compact_toolbar_layout()
 
-        self.load_selection_btn = ET_style.create_primary_button("Load Selected UVs",
+        self.load_selection_btn = ET_style.create_primary_button("Load Sel",
             tooltip="Load current Maya UV selection into eTrim."
         )
 
@@ -164,10 +164,8 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
             tooltip="Frame the 0-1 UV tile."
         )
 
-        self.backdrop_image_btn = ET_style.create_toggle_button("Backdrop Image",
-            checked=False,
-            tooltip="Show or hide base color texture behind the UVs.",
-            minimum_width=120
+        self.backdrop_image_btn = ET_style.create_toggle_button("BG Image",
+            tooltip="Show or hide base color texture behind the UVs."
         )
 
         self.backdrop_opacity_spin = QtWidgets.QSpinBox()
@@ -182,13 +180,10 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         toolbar_layout.addWidget(self.load_selection_btn)
         toolbar_layout.addWidget(self.apply_btn)
 
-        toolbar_layout.addSpacing(12)
 
         toolbar_layout.addWidget(self.create_box_btn)
         toolbar_layout.addWidget(self.delete_box_btn)
         toolbar_layout.addWidget(self.clear_boxes_btn)
-
-        toolbar_layout.addSpacing(12)
 
         toolbar_layout.addWidget(self.frame_btn)
 
@@ -203,25 +198,21 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         # -----------------------------------------------------
         # Tool / storage toolbar
         # -----------------------------------------------------
-        selection_toolbar_layout = ET_style.create_toolbar_layout()
+        selection_toolbar_layout = ET_style.create_compact_toolbar_layout()
 
         # Left side: interaction toggles
-        self.enable_uv_selection_btn = ET_style.create_toggle_button("UV Selection: ON",
+        self.enable_uv_selection_btn = ET_style.create_toggle_button("UV Sel: ON",
             checked=True,
-            tooltip="Enable or disable UV picking and UV interaction.",
-            minimum_width=120
+            tooltip="Enable or disable UV picking and UV interaction."
         )
 
-        self.enable_box_selection_btn = ET_style.create_toggle_button("Box Selection: ON",
+        self.enable_box_selection_btn = ET_style.create_toggle_button("Box Sel: ON",
             checked=True,
-            tooltip="Enable or disable box picking and box interaction.",
-            minimum_width=120
+            tooltip="Enable or disable box picking and box interaction."
         )
 
-        self.uv_select_mode_btn = ET_style.create_toggle_button("Shells",
-            checked=False,
-            tooltip="Toggle between shell selection and face selection.",
-            minimum_width=88
+        self.uv_select_mode_btn = ET_style.create_toggle_button("On Shells",
+            tooltip="Toggle between shell selection and face selection."
         )
 
         selection_toolbar_layout.addWidget(self.enable_uv_selection_btn)
@@ -233,23 +224,19 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
 
         # Right side: storage buttons
         self.save_layout_btn = ET_style.create_action_button("Save .etrim",
-            tooltip="Save current eTrim layout to a .etrim file.",
-            minimum_width=92
+            tooltip="Save current eTrim layout to a .etrim file."
         )
 
         self.load_layout_btn = ET_style.create_action_button("Load .etrim",
-            tooltip="Load an eTrim layout from a .etrim file.",
-            minimum_width=92
+            tooltip="Load an eTrim layout from a .etrim file."
         )
 
         self.save_scene_layout_btn = ET_style.create_action_button("Save To Scene",
-            tooltip="Save current eTrim layout into the Maya scene.",
-            minimum_width=104
+            tooltip="Save current eTrim layout into the Maya scene."
         )
 
         self.load_scene_layout_btn = ET_style.create_action_button("Load From Scene",
-            tooltip="Load eTrim layout from the Maya scene.",
-            minimum_width=112
+            tooltip="Load eTrim layout from the Maya scene."
         )
 
         selection_toolbar_layout.addWidget(self.save_layout_btn)
@@ -272,10 +259,7 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         self.viewer = ETrimViewer(self.model)
         main_layout.addWidget(self.viewer, 1)
 
-        self.storage = ETrimStorage(
-            self.model,
-            self.viewer
-        )
+        self.storage = ETrimStorage(self.model, self.viewer)
 
     def create_connections(self):
         self.load_selection_btn.clicked.connect(self.load_selected_uvs)
@@ -371,10 +355,10 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         """
 
         if self.uv_select_mode_btn.isChecked():
-            self.uv_select_mode_btn.setText("Faces")
+            self.uv_select_mode_btn.setText("On Faces")
             self.viewer.uv_drawer.set_selection_mode("face")
         else:
-            self.uv_select_mode_btn.setText("Shells")
+            self.uv_select_mode_btn.setText("On Shells")
             self.viewer.uv_drawer.set_selection_mode("shell")
 
         self.viewer.update()
@@ -431,9 +415,9 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         self.enable_box_selection_btn.setChecked(box_enabled)
 
         if box_enabled:
-            self.enable_box_selection_btn.setText("Box Selection: ON")
+            self.enable_box_selection_btn.setText("Box Sel: ON")
         else:
-            self.enable_box_selection_btn.setText("Box Selection: OFF")
+            self.enable_box_selection_btn.setText("Box Sel: OFF")
 
         uv_mode = self.viewer.get_uv_selection_mode()
 
@@ -582,9 +566,9 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         enabled = self.enable_uv_selection_btn.isChecked()
 
         if enabled:
-            self.enable_uv_selection_btn.setText("UV Selection: ON")
+            self.enable_uv_selection_btn.setText("UV Sel: ON")
         else:
-            self.enable_uv_selection_btn.setText("UV Selection: OFF")
+            self.enable_uv_selection_btn.setText("UV Sel: OFF")
 
         self.viewer.set_uv_selection_enabled(enabled)
 
@@ -593,9 +577,9 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         enabled = self.enable_box_selection_btn.isChecked()
 
         if enabled:
-            self.enable_box_selection_btn.setText("Box Selection: ON")
+            self.enable_box_selection_btn.setText("Box Sel: ON")
         else:
-            self.enable_box_selection_btn.setText("Box Selection: OFF")
+            self.enable_box_selection_btn.setText("Box Sel: OFF")
 
         self.viewer.set_box_selection_enabled(enabled)
     # -----------------------------------------------------

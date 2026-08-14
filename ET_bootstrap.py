@@ -7,9 +7,12 @@ import importlib
 MODULES_TO_RELOAD = [
     "ET_core.ET_box_model",
     "ET_core.ET_uv_model",
+    "ET_core.ET_storage",
+    "ET_core.ET_texture_finder",
 
+    "ET_ui.ET_style",
     "ET_ui.drawables.ET_drawable_object",
-    "ET_ui.drawables.ET_uv_drawer",    
+    "ET_ui.drawables.ET_uv_drawer",
     "ET_ui.drawables.ET_box_drawer",
     "ET_ui.ET_viewer",
     "ET_ui.ET_main_window",

@@ -297,24 +297,24 @@ class EUVDrawer(EDrawableObjectController):
                 )
             )
 
-            if self.selection_mode == "face" and (
-                is_face_hovered or
-                is_face_active or
-                is_face_selected
-            ):
+            # Shell mode:
+            # keep face fill normal. Shell selection is shown by outer boundary only.
+            if self.selection_mode == "shell":
+                color = self.face_color
+
+            # Face mode:
+            # individual face fill state.
+            else:
                 if is_face_active or is_face_selected:
                     color = self.active_face_color
-                else:
-                    color = self.hover_face_color
-            else:
-                if is_active:
-                    color = self.active_face_color
-                elif is_hovered:
+                elif is_face_hovered:
                     color = self.hover_face_color
                 else:
                     color = self.face_color
 
-            painter.setBrush(QtGui.QBrush(color))
+            painter.setBrush(
+                QtGui.QBrush(color)
+            )
 
             polygon = self.uv_polygon_for_face(
                 mesh_data,
@@ -325,55 +325,357 @@ class EUVDrawer(EDrawableObjectController):
                 painter.drawPolygon(polygon)
 
     def draw_shell_edges(self, painter, mesh_data, shell_data, is_hovered, is_active):
-        if is_active:
-            color = self.active_edge_color
-            width = self.active_edge_width
-        elif is_hovered:
-            color = self.hover_edge_color
-            width = self.hover_edge_width
-        else:
-            color = self.edge_color
-            width = self.edge_width
+        """
+        Draw shell/face edge states.
 
-        pen = QtGui.QPen(
-            color,
-            width
+        Shell mode:
+            - all shell edges draw normally
+            - only shell boundary edges highlight on shell hover/selection
+
+        Face mode:
+            - all shell edges draw normally
+            - selected/hovered/active face edges highlight individually
+        """
+
+        # -----------------------------------------------------
+        # Base edges
+        # -----------------------------------------------------
+
+        painter.setPen(
+            QtGui.QPen(
+                self.edge_color,
+                self.edge_width
+            )
         )
 
-        painter.setPen(pen)
-        painter.setBrush(QtCore.Qt.NoBrush)
+        painter.setBrush(
+            QtCore.Qt.NoBrush
+        )
 
         for uv_a, uv_b in shell_data.edges:
-            p_a = self.uv_point_to_screen(mesh_data, uv_a)
-            p_b = self.uv_point_to_screen(mesh_data, uv_b)
-
-            painter.drawLine(p_a, p_b)
-
-    def draw_shell_vertices(self, painter, mesh_data, shell_data, is_hovered, is_active):
-        if is_active:
-            color = self.active_vertex_color
-            radius = self.active_vertex_radius
-        elif is_hovered:
-            color = self.hover_vertex_color
-            radius = self.hover_vertex_radius
-        else:
-            color = self.vertex_color
-            radius = self.vertex_radius
-
-        painter.setPen(QtCore.Qt.NoPen)
-        painter.setBrush(QtGui.QBrush(color))
-
-        for uv_id in shell_data.uv_ids:
-            point = self.uv_point_to_screen(mesh_data, uv_id)
-
-            rect = QtCore.QRectF(
-                point.x() - radius,
-                point.y() - radius,
-                radius * 2.0,
-                radius * 2.0
+            self.draw_uv_edge(
+                painter,
+                mesh_data,
+                uv_a,
+                uv_b
             )
 
-            painter.drawEllipse(rect)
+        # -----------------------------------------------------
+        # Shell mode overlay: boundary only
+        # -----------------------------------------------------
+
+        if self.selection_mode == "shell":
+            if not is_hovered and not is_active:
+                return
+
+            if is_active:
+                color = self.active_edge_color
+                width = self.active_edge_width
+            else:
+                color = self.hover_edge_color
+                width = self.hover_edge_width
+
+            painter.setPen(
+                QtGui.QPen(
+                    color,
+                    width
+                )
+            )
+
+            boundary_edges = self.get_shell_boundary_edges(
+                shell_data
+            )
+
+            for uv_a, uv_b in boundary_edges:
+                self.draw_uv_edge(
+                    painter,
+                    mesh_data,
+                    uv_a,
+                    uv_b
+                )
+
+            return
+
+        # -----------------------------------------------------
+        # Face mode overlay: per-face edges
+        # -----------------------------------------------------
+
+        for face_uv_ids in shell_data.faces:
+            face_index = self.get_face_index(
+                mesh_data,
+                face_uv_ids
+            )
+
+            is_face_hovered = self.face_ref_matches(
+                self.hover_face,
+                mesh_data,
+                face_index
+            )
+
+            is_face_active = self.face_ref_matches(
+                self.active_face,
+                mesh_data,
+                face_index
+            )
+
+            is_face_selected = self.viewer.is_drawable_selected(
+                self.drawable_key_for_face(
+                    mesh_data,
+                    face_index
+                )
+            )
+
+            if not is_face_hovered and not is_face_active and not is_face_selected:
+                continue
+
+            if is_face_active or is_face_selected:
+                color = self.active_edge_color
+                width = self.active_edge_width
+            else:
+                color = self.hover_edge_color
+                width = self.hover_edge_width
+
+            painter.setPen(
+                QtGui.QPen(
+                    color,
+                    width
+                )
+            )
+
+            for uv_a, uv_b in self.get_face_edges(face_uv_ids):
+                self.draw_uv_edge(
+                    painter,
+                    mesh_data,
+                    uv_a,
+                    uv_b
+                )
+
+    def draw_shell_vertices(self, painter, mesh_data, shell_data, is_hovered, is_active):
+        """
+        Draw vertex states.
+
+        Shell mode:
+            - all vertices normal
+            - only boundary vertices highlight on shell hover/selection
+
+        Face mode:
+            - all vertices normal
+            - selected/hovered/active face vertices highlight individually
+        """
+
+        # -----------------------------------------------------
+        # Base vertices
+        # -----------------------------------------------------
+
+        painter.setPen(
+            QtCore.Qt.NoPen
+        )
+
+        painter.setBrush(
+            QtGui.QBrush(self.vertex_color)
+        )
+
+        for uv_id in shell_data.uv_ids:
+            self.draw_uv_vertex(
+                painter,
+                mesh_data,
+                uv_id,
+                self.vertex_radius
+            )
+
+        # -----------------------------------------------------
+        # Shell mode overlay: boundary vertices only
+        # -----------------------------------------------------
+
+        if self.selection_mode == "shell":
+            if not is_hovered and not is_active:
+                return
+
+            if is_active:
+                color = self.active_vertex_color
+                radius = self.active_vertex_radius
+            else:
+                color = self.hover_vertex_color
+                radius = self.hover_vertex_radius
+
+            painter.setBrush(
+                QtGui.QBrush(color)
+            )
+
+            boundary_uv_ids = set()
+
+            for uv_a, uv_b in self.get_shell_boundary_edges(shell_data):
+                boundary_uv_ids.add(uv_a)
+                boundary_uv_ids.add(uv_b)
+
+            for uv_id in boundary_uv_ids:
+                self.draw_uv_vertex(
+                    painter,
+                    mesh_data,
+                    uv_id,
+                    radius
+                )
+
+            return
+
+        # -----------------------------------------------------
+        # Face mode overlay: per-face vertices
+        # -----------------------------------------------------
+
+        highlighted_uv_ids = {}
+
+        for face_uv_ids in shell_data.faces:
+            face_index = self.get_face_index(
+                mesh_data,
+                face_uv_ids
+            )
+
+            is_face_hovered = self.face_ref_matches(
+                self.hover_face,
+                mesh_data,
+                face_index
+            )
+
+            is_face_active = self.face_ref_matches(
+                self.active_face,
+                mesh_data,
+                face_index
+            )
+
+            is_face_selected = self.viewer.is_drawable_selected(
+                self.drawable_key_for_face(
+                    mesh_data,
+                    face_index
+                )
+            )
+
+            if is_face_active or is_face_selected:
+                for uv_id in face_uv_ids:
+                    highlighted_uv_ids[uv_id] = "active"
+
+            elif is_face_hovered:
+                for uv_id in face_uv_ids:
+                    if uv_id not in highlighted_uv_ids:
+                        highlighted_uv_ids[uv_id] = "hover"
+
+        for uv_id, state in highlighted_uv_ids.items():
+            if state == "active":
+                color = self.active_vertex_color
+                radius = self.active_vertex_radius
+            else:
+                color = self.hover_vertex_color
+                radius = self.hover_vertex_radius
+
+            painter.setBrush(
+                QtGui.QBrush(color)
+            )
+
+            self.draw_uv_vertex(
+                painter,
+                mesh_data,
+                uv_id,
+                radius
+            )
+
+    def edge_key(self, uv_a, uv_b):
+        return tuple(sorted((uv_a, uv_b)))
+
+
+    def get_shell_boundary_edges(self, shell_data):
+        """
+        Return only outer boundary edges for a shell.
+
+        Internal shared face edges are ignored.
+        """
+
+        edge_counts = {}
+
+        for face_uv_ids in shell_data.faces:
+            count = len(face_uv_ids)
+
+            for index, uv_a in enumerate(face_uv_ids):
+                uv_b = face_uv_ids[(index + 1) % count]
+
+                key = self.edge_key(
+                    uv_a,
+                    uv_b
+                )
+
+                edge_counts[key] = edge_counts.get(key, 0) + 1
+
+        boundary_edges = []
+
+        for face_uv_ids in shell_data.faces:
+            count = len(face_uv_ids)
+
+            for index, uv_a in enumerate(face_uv_ids):
+                uv_b = face_uv_ids[(index + 1) % count]
+
+                key = self.edge_key(
+                    uv_a,
+                    uv_b
+                )
+
+                if edge_counts.get(key, 0) == 1:
+                    boundary_edges.append(
+                        (
+                            uv_a,
+                            uv_b
+                        )
+                    )
+
+        return boundary_edges
+
+
+    def get_face_edges(self, face_uv_ids):
+        edges = []
+
+        count = len(face_uv_ids)
+
+        for index, uv_a in enumerate(face_uv_ids):
+            uv_b = face_uv_ids[(index + 1) % count]
+
+            edges.append(
+                (
+                    uv_a,
+                    uv_b
+                )
+            )
+
+        return edges
+
+
+    def draw_uv_edge(self, painter, mesh_data, uv_a, uv_b):
+        p_a = self.uv_point_to_screen(
+            mesh_data,
+            uv_a
+        )
+
+        p_b = self.uv_point_to_screen(
+            mesh_data,
+            uv_b
+        )
+
+        painter.drawLine(
+            p_a,
+            p_b
+        )
+
+
+    def draw_uv_vertex(self, painter, mesh_data, uv_id, radius):
+        point = self.uv_point_to_screen(
+            mesh_data,
+            uv_id
+        )
+
+        rect = QtCore.QRectF(
+            point.x() - radius,
+            point.y() - radius,
+            radius * 2.0,
+            radius * 2.0
+        )
+
+        painter.drawEllipse(rect)
 
     # -----------------------------------------------------
     # Preview fit / trim operations

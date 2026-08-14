@@ -6,6 +6,9 @@ except ImportError:
     from PySide6 import QtWidgets
 
 
+MINIMUM_BUTTON_WIDTH = 70
+MINIMUM_BUTTON_HEIGHT = 22
+
 # -----------------------------------------------------
 # eTrim palette
 # -----------------------------------------------------
@@ -202,11 +205,12 @@ QSpinBox:hover {
 def create_action_button(
     text,
     tooltip=None,
-    minimum_width=88
+    minimum_width=MINIMUM_BUTTON_WIDTH,
+    minimum_height=MINIMUM_BUTTON_HEIGHT
 ):
     button = QtWidgets.QPushButton(text)
     button.setMinimumWidth(minimum_width)
-    button.setMinimumHeight(24)
+    button.setMinimumHeight(minimum_height)
     button.setStyleSheet(ACTION_BUTTON_STYLE)
 
     if tooltip:
@@ -218,11 +222,12 @@ def create_action_button(
 def create_primary_button(
     text,
     tooltip=None,
-    minimum_width=88
+    minimum_width=MINIMUM_BUTTON_WIDTH,
+    minimum_height=MINIMUM_BUTTON_HEIGHT
 ):
     button = QtWidgets.QPushButton(text)
     button.setMinimumWidth(minimum_width)
-    button.setMinimumHeight(24)
+    button.setMinimumHeight(minimum_height)
     button.setStyleSheet(PRIMARY_BUTTON_STYLE)
 
     if tooltip:
@@ -235,13 +240,14 @@ def create_toggle_button(
     text,
     checked=False,
     tooltip=None,
-    minimum_width=88
+    minimum_width=MINIMUM_BUTTON_WIDTH,
+    minimum_height=MINIMUM_BUTTON_HEIGHT
 ):
     button = QtWidgets.QPushButton(text)
     button.setCheckable(True)
     button.setChecked(checked)
     button.setMinimumWidth(minimum_width)
-    button.setMinimumHeight(24)
+    button.setMinimumHeight(minimum_height)
     button.setStyleSheet(TOGGLE_BUTTON_STYLE)
 
     if tooltip:
@@ -253,11 +259,12 @@ def create_toggle_button(
 def create_danger_button(
     text,
     tooltip=None,
-    minimum_width=88
+    minimum_width=MINIMUM_BUTTON_WIDTH,
+    minimum_height=MINIMUM_BUTTON_HEIGHT
 ):
     button = QtWidgets.QPushButton(text)
     button.setMinimumWidth(minimum_width)
-    button.setMinimumHeight(24)
+    button.setMinimumHeight(minimum_height)
     button.setStyleSheet(DANGER_BUTTON_STYLE)
 
     if tooltip:
@@ -268,7 +275,7 @@ def create_danger_button(
 
 def create_toolbar_layout():
     layout = QtWidgets.QHBoxLayout()
-    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setContentsMargins(10, 10, 10, 10)
     layout.setSpacing(6)
 
     return layout
