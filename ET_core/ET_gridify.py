@@ -112,61 +112,61 @@ def split_selected_faces_if_needed(viewer):
 
     return True
 
-
 def get_gridify_uv_pairs(viewer):
     """
     Resolve current viewer selection into UV pairs.
 
     Priority:
-        1. selected faces
-        2. selected shells
-        3. active face
-        4. active shell
-        5. full loaded cache fallback
+        1. selected vertices
+        2. selected faces
+        3. selected shells
+        4. active vertex
+        5. active face
+        6. active shell
+        7. full loaded cache fallback
     """
 
     if not viewer or not viewer.uv_drawer:
         return []
 
     uv_drawer = viewer.uv_drawer
-    selected_vertex_pairs = uv_drawer.get_uv_pairs_from_selected_drawables(
-        "uv_vertex"
-    )
 
-    if selected_vertex_pairs:
-        if hasattr(uv_drawer, "prepare_selected_vertices_for_preview_edit"):
-            prepared_pairs = uv_drawer.prepare_selected_vertices_for_preview_edit()
+    # -----------------------------------------------------
+    # Selected drawables
+    # -----------------------------------------------------
 
-            if prepared_pairs:
-                return unique_uv_pairs(
-                    prepared_pairs
-                )
-
-        return unique_uv_pairs(
-            selected_vertex_pairs
-        )
-
-    # Face selection first.
-    selected_face_pairs = uv_drawer.get_uv_pairs_from_selected_drawables(
-        "uv_face"
-    )
-
-    if selected_face_pairs:
-        return unique_uv_pairs(
-            selected_face_pairs
-        )
-
-    # Shell selection second.
-    selected_shell_pairs = uv_drawer.get_uv_pairs_from_selected_drawables(
+    for drawable_type in (
+        "uv_vertex",
+        "uv_face",
         "uv_shell"
-    )
-
-    if selected_shell_pairs:
-        return unique_uv_pairs(
-            selected_shell_pairs
+    ):
+        uv_pairs = uv_drawer.get_uv_pairs_from_selected_drawables(
+            drawable_type
         )
 
-    # Active face fallback.
+        if uv_pairs:
+            return unique_uv_pairs(
+                uv_pairs
+            )
+
+    # -----------------------------------------------------
+    # Active drawable fallbacks
+    # -----------------------------------------------------
+
+    active_vertex = getattr(
+        uv_drawer,
+        "active_vertex",
+        None
+    )
+
+    if active_vertex:
+        return unique_uv_pairs(
+            uv_drawer.get_uv_pairs_from_ref(
+                uv_drawer.MODE_VERTEX,
+                active_vertex
+            )
+        )
+
     active_face = getattr(
         uv_drawer,
         "active_face",
@@ -174,19 +174,13 @@ def get_gridify_uv_pairs(viewer):
     )
 
     if active_face:
-        mesh_data, face_index, face_uv_ids = active_face
-
         return unique_uv_pairs(
-            [
-                (
-                    mesh_data,
-                    uv_id
-                )
-                for uv_id in face_uv_ids
-            ]
+            uv_drawer.get_uv_pairs_from_ref(
+                uv_drawer.MODE_FACE,
+                active_face
+            )
         )
 
-    # Active shell fallback.
     active_shell = getattr(
         uv_drawer,
         "active_shell",
@@ -194,16 +188,17 @@ def get_gridify_uv_pairs(viewer):
     )
 
     if active_shell:
-        mesh_data, shell_data = active_shell
-
         return unique_uv_pairs(
-            uv_drawer.get_uv_pairs_from_shell(
-                mesh_data,
-                shell_data
+            uv_drawer.get_uv_pairs_from_ref(
+                uv_drawer.MODE_SHELL,
+                active_shell
             )
         )
 
-    # Whole cache fallback.
+    # -----------------------------------------------------
+    # Whole cache fallback
+    # -----------------------------------------------------
+
     uv_cache = getattr(
         viewer,
         "uv_cache",
@@ -216,7 +211,9 @@ def get_gridify_uv_pairs(viewer):
     uv_pairs = []
 
     for mesh_data in uv_cache.meshes:
-        ensure_preview_positions(mesh_data)
+        uv_drawer.ensure_preview_positions(
+            mesh_data
+        )
 
         for uv_id in mesh_data.preview_uv_positions.keys():
             uv_pairs.append(
@@ -226,10 +223,7 @@ def get_gridify_uv_pairs(viewer):
                 )
             )
 
-    return unique_uv_pairs(
-        uv_pairs
-    )
-
+    return unique_
 
 def group_uv_pairs_by_mesh(uv_pairs):
     grouped = {}
@@ -629,12 +623,6 @@ def gridify_viewer_selection_to_preview(viewer):
     if not uv_cache.has_data():
         print("[eTrim] Empty UV cache. Gridify skipped.")
         return False
-
-    # If faces are selected, isolate them first.
-    # This prevents selected-face gridify from pulling the whole original shell.
-    split_selected_faces_if_needed(
-        viewer
-    )
 
     uv_pairs = get_gridify_uv_pairs(
         viewer

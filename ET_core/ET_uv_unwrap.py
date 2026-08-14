@@ -3,6 +3,8 @@
 import maya.cmds as cmds
 import maya.mel as mel
 
+from ET_core import ET_uv_model
+
 
 TEMP_PREFIX = "ET_unwrap_TEMP_"
 
@@ -252,20 +254,135 @@ def get_selected_shell_face_indices_from_keys(selected_keys, mesh_data):
 
     return sorted(set(face_indices))
 
+def get_selected_vertex_complete_face_indices_from_keys(selected_keys, mesh_data):
+    """
+    Convert selected vertex keys into complete face indices for one mesh_data.
+
+    Only faces whose every preview UV id is selected are returned.
+
+    This prevents vertex-mode unwrap from falling back to the entire shell.
+    """
+
+    selected_uv_ids = set()
+
+    for key in selected_keys:
+        if not key:
+            continue
+
+        if key[0] != "uv_vertex":
+            continue
+
+        if len(key) < 4:
+            continue
+
+        _, mesh_name, uv_set, uv_id = key
+
+        if mesh_name != mesh_data.mesh_name:
+            continue
+
+        if uv_set != mesh_data.uv_set:
+            continue
+
+        selected_uv_ids.add(
+            int(uv_id)
+        )
+
+    if not selected_uv_ids:
+        return []
+
+    return ET_uv_model.get_complete_face_indices_from_uv_ids(
+        mesh_data,
+        selected_uv_ids
+    )
 
 def get_face_indices_for_unwrap(viewer, mesh_data):
     """
-    Resolve selected faces/shells into mesh face indices.
+    Resolve selected components into mesh face indices.
 
     Priority:
-        selected UV faces
-        selected UV shells
-        all faces in mesh_data as fallback
+        1. selected UV vertices, if current mode is vertex
+        2. selected UV faces
+        3. selected UV shells
+        4. fallback to all faces only if there is no explicit UV component selection
+
+    Important:
+        In vertex mode, selected vertices must never accidentally unwrap the
+        whole shell. If the selected vertices do not form complete faces,
+        unwrap returns no faces.
     """
+
+    if not viewer or not mesh_data:
+        return []
+
+    uv_mode = viewer.get_uv_selection_mode()
+
+    selected_vertex_keys = viewer.get_selected_drawables_by_type(
+        "uv_vertex"
+    )
 
     selected_face_keys = viewer.get_selected_drawables_by_type(
         "uv_face"
     )
+
+    selected_shell_keys = viewer.get_selected_drawables_by_type(
+        "uv_shell"
+    )
+
+    # -----------------------------------------------------
+    # Vertex mode has priority over stale face/shell selection.
+    # -----------------------------------------------------
+
+    if uv_mode == "vertex":
+        face_indices = get_selected_vertex_complete_face_indices_from_keys(
+            selected_vertex_keys,
+            mesh_data
+        )
+
+        if face_indices:
+            return face_indices
+
+        if selected_vertex_keys:
+            print(
+                "[eTrim] Vertex unwrap skipped. Selected vertices do not form complete faces:"
+            )
+            print("        mesh:", mesh_data.mesh_name)
+            return []
+
+    # -----------------------------------------------------
+    # Face mode has priority over stale shell selection.
+    # -----------------------------------------------------
+
+    if uv_mode == "face":
+        face_indices = get_selected_face_indices_from_keys(
+            selected_face_keys,
+            mesh_data
+        )
+
+        if face_indices:
+            return face_indices
+
+        if selected_face_keys:
+            return []
+
+    # -----------------------------------------------------
+    # Shell mode / generic shell selection.
+    # -----------------------------------------------------
+
+    if uv_mode == "shell":
+        face_indices = get_selected_shell_face_indices_from_keys(
+            selected_shell_keys,
+            mesh_data
+        )
+
+        if face_indices:
+            return face_indices
+
+        if selected_shell_keys:
+            return []
+
+    # -----------------------------------------------------
+    # Fallbacks for non-mode-specific calls.
+    # -----------------------------------------------------
 
     face_indices = get_selected_face_indices_from_keys(
         selected_face_keys,
@@ -275,10 +392,6 @@ def get_face_indices_for_unwrap(viewer, mesh_data):
     if face_indices:
         return face_indices
 
-    selected_shell_keys = viewer.get_selected_drawables_by_type(
-        "uv_shell"
-    )
-
     face_indices = get_selected_shell_face_indices_from_keys(
         selected_shell_keys,
         mesh_data
@@ -287,8 +400,11 @@ def get_face_indices_for_unwrap(viewer, mesh_data):
     if face_indices:
         return face_indices
 
-    return list(range(len(mesh_data.faces)))
+    # If any explicit UV selection exists, do not unwrap all faces.
+    if selected_vertex_keys or selected_face_keys or selected_shell_keys:
+        return []
 
+    return list(range(len(mesh_data.faces)))
 
 def select_temp_faces(temp_transform, face_indices):
     components = [
@@ -495,6 +611,13 @@ def unwrap_mesh_data_to_preview(viewer, mesh_data, iterations=1, pack=False):
         viewer,
         mesh_data
     )
+
+    if viewer.get_uv_selection_mode() == "vertex" and face_indices:
+        ET_uv_model.split_faces_to_preview_shell(
+            mesh_data,
+            face_indices
+        )
+
 
     if not face_indices:
         print("[eTrim] No faces found for unwrap:", mesh_data.mesh_name)

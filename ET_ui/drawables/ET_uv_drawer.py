@@ -1519,9 +1519,12 @@ class EUVDrawer(EDrawableObjectController):
         uv_pairs = []
 
         if key and self.viewer.is_drawable_selected(key):
-            uv_pairs = self.get_uv_pairs_from_selected_drawables(
-                key[0]
-            )
+            if mode == self.MODE_VERTEX:
+                uv_pairs = self.prepare_selected_vertices_for_preview_edit()
+            else:
+                uv_pairs = self.get_uv_pairs_from_selected_drawables(
+                    key[0]
+                )
         else:
             uv_pairs = self.get_uv_pairs_from_ref(
                 mode,
