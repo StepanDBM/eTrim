@@ -129,6 +129,22 @@ def get_gridify_uv_pairs(viewer):
         return []
 
     uv_drawer = viewer.uv_drawer
+    selected_vertex_pairs = uv_drawer.get_uv_pairs_from_selected_drawables(
+        "uv_vertex"
+    )
+
+    if selected_vertex_pairs:
+        if hasattr(uv_drawer, "prepare_selected_vertices_for_preview_edit"):
+            prepared_pairs = uv_drawer.prepare_selected_vertices_for_preview_edit()
+
+            if prepared_pairs:
+                return unique_uv_pairs(
+                    prepared_pairs
+                )
+
+        return unique_uv_pairs(
+            selected_vertex_pairs
+        )
 
     # Face selection first.
     selected_face_pairs = uv_drawer.get_uv_pairs_from_selected_drawables(

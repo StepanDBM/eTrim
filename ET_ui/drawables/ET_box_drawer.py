@@ -1031,9 +1031,7 @@ class EBoxDrawer(EDrawableObjectController):
             print("[eTrim] Gridify failed. Fit skipped.")
             return
 
-        self.fit_selected_uvs_in_box(
-            box_id
-        )
+        self.fit_selected_uvs_in_box(box_id)
 
         print("[eTrim] Gridify + fit complete:", box.name)
 
@@ -1060,9 +1058,7 @@ class EBoxDrawer(EDrawableObjectController):
             print("[eTrim] Native unwrap failed. Fit skipped.")
             return
 
-        self.fit_selected_uvs_in_box(
-            box_id
-        )
+        self.fit_selected_uvs_in_box(box_id)
 
         print("[eTrim] Native unwrap + fit complete:", box.name)
 
@@ -1100,9 +1096,7 @@ class EBoxDrawer(EDrawableObjectController):
             print("[eTrim] Gridify failed. Fit skipped.")
             return
 
-        self.fit_selected_uvs_in_box(
-            box_id
-        )
+        self.fit_selected_uvs_in_box(box_id)
 
         print("[eTrim] Native unwrap + gridify + fit complete:", box.name)
 

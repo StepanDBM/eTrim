@@ -98,7 +98,7 @@ class ETrimViewer(QtWidgets.QWidget):
 
             self.selected_drawables = [
                 key for key in self.selected_drawables
-                if not key or key[0] not in ("uv_shell", "uv_face")
+                if not key or key[0] not in ("uv_shell", "uv_face", "uv_vertex")
             ]
 
         self.update()
@@ -405,8 +405,13 @@ class ETrimViewer(QtWidgets.QWidget):
                 "active_face",
                 None
             )
+            active_vertex = getattr(
+                self.uv_drawer,
+                "active_vertex",
+                None
+            )
 
-            if active_shell or active_face:
+            if active_shell or active_face or active_vertex:
                 return self.uv_drawer
 
         return None
@@ -723,7 +728,8 @@ class ETrimViewer(QtWidgets.QWidget):
         if self.uv_selection_enabled and self.uv_drawer:
             if (
                 getattr(self.uv_drawer, "is_dragging_shell", False) or
-                getattr(self.uv_drawer, "is_dragging_face", False)
+                getattr(self.uv_drawer, "is_dragging_face", False) or
+                getattr(self.uv_drawer, "is_dragging_vertex", False)
             ):
                 if self.uv_drawer.mouse_move_event(event):
                     return
@@ -847,7 +853,8 @@ class ETrimViewer(QtWidgets.QWidget):
         if self.uv_selection_enabled and self.uv_drawer:
             if (
                 getattr(self.uv_drawer, "is_dragging_shell", False) or
-                getattr(self.uv_drawer, "is_dragging_face", False)
+                getattr(self.uv_drawer, "is_dragging_face", False) or
+                getattr(self.uv_drawer, "is_dragging_vertex", False)
             ):
                 if self.uv_drawer.mouse_release_event(event):
                     return

@@ -378,6 +378,148 @@ def rebuild_preview_topology(mesh_data):
 
     build_shells(mesh_data)
 
+def get_complete_face_indices_from_uv_ids(mesh_data, selected_uv_ids):
+    """
+    Return face indices whose all preview UV ids are selected.
+
+    This lets vertex selections behave like face-island edits when the selected
+    vertices actually describe complete faces.
+    """
+
+    if not mesh_data:
+        return []
+
+    selected_uv_ids = set(selected_uv_ids)
+
+    if not selected_uv_ids:
+        return []
+
+    face_indices = []
+
+    for face_index, face_uv_ids in enumerate(mesh_data.faces):
+        if not face_uv_ids:
+            continue
+
+        all_face_uvs_selected = True
+
+        for uv_id in face_uv_ids:
+            if uv_id not in selected_uv_ids:
+                all_face_uvs_selected = False
+                break
+
+        if all_face_uvs_selected:
+            face_indices.append(face_index)
+
+    return face_indices
+
+
+def get_uv_pairs_from_face_indices(mesh_data, face_indices):
+    """
+    Return unique UV pairs from given face indices.
+
+    Returns:
+        [(mesh_data, uv_id), ...]
+    """
+
+    if not mesh_data:
+        return []
+
+    uv_pairs = []
+    seen = set()
+
+    for face_index in face_indices:
+        if face_index < 0:
+            continue
+
+        if face_index >= len(mesh_data.faces):
+            continue
+
+        for uv_id in mesh_data.faces[face_index]:
+            key = (
+                id(mesh_data),
+                uv_id
+            )
+
+            if key in seen:
+                continue
+
+            seen.add(key)
+
+            uv_pairs.append(
+                (
+                    mesh_data,
+                    uv_id
+                )
+            )
+
+    return uv_pairs
+
+
+def prepare_vertex_uvs_for_preview_edit(mesh_data, selected_uv_ids):
+    """
+    Prepare selected UV vertices for a preview edit.
+
+    Behavior:
+        - If selected vertices form complete faces, split those complete faces
+          into their own preview shell, then return the updated preview UV ids.
+        - If selected vertices do not form complete faces, return the selected
+          UV ids directly.
+
+    This is the vertex equivalent of split_faces_to_preview_shell(), but it
+    avoids inventing a fake shell from disconnected single vertices.
+    """
+
+    if not mesh_data:
+        return []
+
+    selected_uv_ids = set(selected_uv_ids)
+
+    if not selected_uv_ids:
+        return []
+
+    ensure_preview_uv_storage(mesh_data)
+
+    complete_face_indices = get_complete_face_indices_from_uv_ids(
+        mesh_data,
+        selected_uv_ids
+    )
+
+    if complete_face_indices:
+        split_faces_to_preview_shell(
+            mesh_data,
+            complete_face_indices
+        )
+
+        return get_uv_pairs_from_face_indices(
+            mesh_data,
+            complete_face_indices
+        )
+
+    uv_pairs = []
+    seen = set()
+
+    for uv_id in selected_uv_ids:
+        if uv_id not in mesh_data.preview_uv_positions:
+            continue
+
+        key = (
+            id(mesh_data),
+            uv_id
+        )
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+
+        uv_pairs.append(
+            (
+                mesh_data,
+                uv_id
+            )
+        )
+
+    return uv_pairs
 
 def split_faces_to_preview_shell(mesh_data, face_indices):
     """
