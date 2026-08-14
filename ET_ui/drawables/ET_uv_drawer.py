@@ -67,6 +67,44 @@ class EUVDrawer(EDrawableObjectController):
 
         self.shell_hit_pixel_distance = 8.0
 
+    FIT_MODE_STRETCH_FILL = "stretch_fill"
+    FIT_MODE_UNIFORM_INSIDE = "uniform_inside"
+    FIT_MODE_UNIFORM_FILL = "uniform_fill"
+    FIT_MODE_BEST_90_INSIDE = "best_90_inside"
+
+
+    def normalize_fit_mode(self, fit_mode):
+        """
+        Normalize old/unknown fit mode names.
+        """
+
+        if fit_mode in (
+            self.FIT_MODE_STRETCH_FILL,
+            self.FIT_MODE_UNIFORM_INSIDE,
+            self.FIT_MODE_UNIFORM_FILL,
+            self.FIT_MODE_BEST_90_INSIDE
+        ):
+            return fit_mode
+
+        # Backward compatibility with old default.
+        if fit_mode == "fit_height":
+            return self.FIT_MODE_STRETCH_FILL
+
+        return self.FIT_MODE_STRETCH_FILL
+
+
+    def get_box_fit_mode(self, box):
+        if not box:
+            return self.FIT_MODE_STRETCH_FILL
+
+        return self.normalize_fit_mode(
+            getattr(
+                box,
+                "fit_mode",
+                self.FIT_MODE_STRETCH_FILL
+            )
+        )
+
     # -----------------------------------------------------
     # Cache
     # -----------------------------------------------------
@@ -702,18 +740,28 @@ class EUVDrawer(EDrawableObjectController):
 
         return self.get_uv_bounds_from_positions(positions)
 
-
     def fit_uv_pairs_to_box(self, uv_pairs, box):
         """
         Fit a group of preview UVs into a trim box.
 
-        Current behavior:
-        - stretch fill into the box
-        - viewer preview only
-        - no Maya UVs are modified
+        Fit modes:
+            stretch_fill:
+                Non-uniform scale to fill the box exactly.
+
+            uniform_inside:
+                Uniform scale, preserve proportions, fit fully inside box.
+
+            uniform_fill:
+                Uniform scale, preserve proportions, fill box, may exceed one axis.
+
+            best_90_inside:
+                Try 0 and 90 degrees, preserve proportions, fit fully inside box.
         """
 
         if not uv_pairs:
+            return False
+
+        if not box:
             return False
 
         src_u_min, src_v_min, src_u_max, src_v_max = self.get_uv_pair_bounds(
@@ -739,17 +787,93 @@ class EUVDrawer(EDrawableObjectController):
             print("[eTrim] Cannot trim UVs. Target box bounds are too small.")
             return False
 
-        scale_u = dst_width / src_width
-        scale_v = dst_height / src_height
+        fit_mode = self.get_box_fit_mode(box)
+
+        src_center_u = (src_u_min + src_u_max) * 0.5
+        src_center_v = (src_v_min + src_v_max) * 0.5
+
+        dst_center_u = (dst_u_min + dst_u_max) * 0.5
+        dst_center_v = (dst_v_min + dst_v_max) * 0.5
+
+        rotate_90 = False
+
+        if fit_mode == self.FIT_MODE_STRETCH_FILL:
+            for mesh_data, uv_id in uv_pairs:
+                u, v = self.get_uv_position(
+                    mesh_data,
+                    uv_id
+                )
+
+                normalized_u = (u - src_u_min) / src_width
+                normalized_v = (v - src_v_min) / src_height
+
+                new_u = dst_u_min + normalized_u * dst_width
+                new_v = dst_v_min + normalized_v * dst_height
+
+                mesh_data.preview_uv_positions[uv_id] = (
+                    new_u,
+                    new_v
+                )
+
+            self.viewer.update()
+            return True
+
+        if fit_mode == self.FIT_MODE_UNIFORM_INSIDE:
+            scale = min(
+                dst_width / src_width,
+                dst_height / src_height
+            )
+
+        elif fit_mode == self.FIT_MODE_UNIFORM_FILL:
+            scale = max(
+                dst_width / src_width,
+                dst_height / src_height
+            )
+
+        elif fit_mode == self.FIT_MODE_BEST_90_INSIDE:
+            scale_0 = min(
+                dst_width / src_width,
+                dst_height / src_height
+            )
+
+            scale_90 = min(
+                dst_width / src_height,
+                dst_height / src_width
+            )
+
+            if scale_90 > scale_0:
+                rotate_90 = True
+                scale = scale_90
+            else:
+                scale = scale_0
+
+        else:
+            scale = min(
+                dst_width / src_width,
+                dst_height / src_height
+            )
 
         for mesh_data, uv_id in uv_pairs:
-            u, v = self.get_uv_position(mesh_data, uv_id)
+            if not hasattr(mesh_data, "preview_uv_positions"):
+                mesh_data.preview_uv_positions = dict(mesh_data.uv_positions)
 
-            normalized_u = (u - src_u_min) / src_width
-            normalized_v = (v - src_v_min) / src_height
+            u, v = self.get_uv_position(
+                mesh_data,
+                uv_id
+            )
 
-            new_u = dst_u_min + normalized_u * dst_width
-            new_v = dst_v_min + normalized_v * dst_height
+            local_u = u - src_center_u
+            local_v = v - src_center_v
+
+            if rotate_90:
+                rotated_u = -local_v
+                rotated_v = local_u
+            else:
+                rotated_u = local_u
+                rotated_v = local_v
+
+            new_u = dst_center_u + rotated_u * scale
+            new_v = dst_center_v + rotated_v * scale
 
             mesh_data.preview_uv_positions[uv_id] = (
                 new_u,
@@ -758,7 +882,6 @@ class EUVDrawer(EDrawableObjectController):
 
         self.viewer.update()
         return True
-
 
     def fit_shell_to_box(self, mesh_data, shell_data, box):
         """

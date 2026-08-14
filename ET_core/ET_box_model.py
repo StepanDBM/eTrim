@@ -16,7 +16,7 @@ class TrimBox:
 
     color: tuple = (1.0, 0.82, 0.1, 1.0)
     padding_px: int = 4
-    fit_mode: str = "fit_height"
+    fit_mode: str = "stretch_fill"
     repeat_u: bool = False
     repeat_v: bool = False
     locked: bool = False

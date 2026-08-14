@@ -748,6 +748,26 @@ class EBoxDrawer(EDrawableObjectController):
         fit_each_selected_shell_action = menu.addAction("Fit Each Selected Shell In Me")
         fit_each_selected_shell_action.triggered.connect(lambda: self.fit_each_selected_shell_in_box(box_id))
 
+        box = self.model().get_box(box_id)
+        menu.addSeparator()
+        fit_mode_menu = menu.addMenu("Fit Mode")
+        current_fit_mode = getattr(
+            box,
+            "fit_mode",
+            "stretch_fill"
+        )
+        for fit_mode, label in self.get_fit_mode_items():
+            action = fit_mode_menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(fit_mode == current_fit_mode)
+
+            action.triggered.connect(
+                lambda checked=False, mode=fit_mode: self.set_box_fit_mode(
+                    box_id,
+                    mode
+                )
+            )
+
         rename_action = menu.addAction("Rename")
         rename_action.triggered.connect(lambda: self.rename_box(box_id))
 
@@ -843,6 +863,56 @@ class EBoxDrawer(EDrawableObjectController):
         print("[eTrim] Changed box color:")
         print("    id:", box.id)
         print("    color:", box.color)
+
+        self.viewer.boxesChanged.emit()
+        self.viewer.update()
+
+    def get_fit_mode_label(self, fit_mode):
+        labels = {
+            "stretch_fill": "Stretch Fill",
+            "uniform_inside": "Uniform Inside",
+            "uniform_fill": "Uniform Fill",
+            "best_90_inside": "Best 90 Inside"
+        }
+
+        return labels.get(
+            fit_mode,
+            "Stretch Fill"
+        )
+
+
+    def get_fit_mode_items(self):
+        return [
+            (
+                "stretch_fill",
+                "Stretch Fill"
+            ),
+            (
+                "uniform_inside",
+                "Uniform Inside"
+            ),
+            (
+                "uniform_fill",
+                "Uniform Fill"
+            ),
+            (
+                "best_90_inside",
+                "Best 90 Inside"
+            )
+        ]
+
+
+    def set_box_fit_mode(self, box_id, fit_mode):
+        box = self.model().get_box(box_id)
+
+        if not box:
+            return
+
+        box.fit_mode = fit_mode
+
+        print("[eTrim] Changed box fit mode:")
+        print("    box:", box.name)
+        print("    mode:", self.get_fit_mode_label(fit_mode))
 
         self.viewer.boxesChanged.emit()
         self.viewer.update()

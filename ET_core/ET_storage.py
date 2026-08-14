@@ -59,7 +59,14 @@ class ETrimStorage(object):
                     "u_max": float(box.u_max),
                     "v_max": float(box.v_max),
                     "color": list(box.color),
-                    "z_index": int(box.z_index)
+                    "z_index": int(box.z_index),
+                    "fit_mode": str(
+                        getattr(
+                            box,
+                            "fit_mode",
+                            "stretch_fill"
+                        )
+                    )
                 }
             )
 
@@ -164,6 +171,17 @@ class ETrimStorage(object):
                 box_data.get(
                     "z_index",
                     box.z_index
+                )
+            )
+
+            box.fit_mode = str(
+                box_data.get(
+                    "fit_mode",
+                    getattr(
+                        box,
+                        "fit_mode",
+                        "stretch_fill"
+                    )
                 )
             )
 
