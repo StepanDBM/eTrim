@@ -1238,30 +1238,16 @@ class EUVDrawer(EDrawableObjectController):
     # Selection
     # -----------------------------------------------------
 
-    def select_faces_in_rect(self, rect, additive=False):
+    def select_faces_in_rect(self, rect, additive=False, subtractive=False):
         """
-        Select UV faces whose screen-space polygon bounds intersect the rectangle.
-
-        Current behavior:
-        - face selection mode only
-        - selects faces by polygon bounding rect overlap
-        - viewer selection list owns the selected keys
+        Select or deselect UV faces whose screen-space polygon bounds intersect rect.
         """
 
         if not self.has_cache():
             return False
 
         if rect.isNull() or rect.width() < 2.0 or rect.height() < 2.0:
-            if not additive:
-                self.viewer.clear_drawable_selection()
-                self.active_face = None
-                self.hover_face = None
-                self.viewer.update()
-
             return False
-
-        if not additive:
-            self.viewer.clear_drawable_selection()
 
         selected_count = 0
         last_face_ref = None
@@ -1286,20 +1272,23 @@ class EUVDrawer(EDrawableObjectController):
                     face_index
                 )
 
-                self.viewer.select_drawable(
-                    drawable_key,
-                    clear_previous=False
-                )
+                if subtractive:
+                    self.viewer.deselect_drawable_key(drawable_key)
+                else:
+                    self.viewer.select_drawable(
+                        drawable_key,
+                        clear_previous=False
+                    )
 
-                last_face_ref = (
-                    mesh_data,
-                    face_index,
-                    face_uv_ids
-                )
+                    last_face_ref = (
+                        mesh_data,
+                        face_index,
+                        face_uv_ids
+                    )
 
                 selected_count += 1
 
-        if last_face_ref:
+        if last_face_ref and not subtractive:
             self.active_face = last_face_ref
             self.hover_face = last_face_ref
             self.active_shell = None
@@ -1313,30 +1302,16 @@ class EUVDrawer(EDrawableObjectController):
         self.viewer.update()
         return selected_count > 0
 
-    def select_shells_in_rect(self, rect, additive=False):
+    def select_shells_in_rect(self, rect, additive=False, subtractive=False):
         """
-        Select UV shells whose screen-space bounds intersect the rectangle.
-
-        Current behavior:
-        - shell selection mode only
-        - selects shells by bounding rect overlap
-        - viewer selection list owns selected keys
+        Select or deselect UV shells whose screen-space bounds intersect rect.
         """
 
         if not self.has_cache():
             return False
 
         if rect.isNull() or rect.width() < 2.0 or rect.height() < 2.0:
-            if not additive:
-                self.viewer.clear_drawable_selection()
-                self.active_shell = None
-                self.hover_shell = None
-                self.viewer.update()
-
             return False
-
-        if not additive:
-            self.viewer.clear_drawable_selection()
 
         selected_count = 0
         last_shell_ref = None
@@ -1361,19 +1336,22 @@ class EUVDrawer(EDrawableObjectController):
                     shell_data
                 )
 
-                self.viewer.select_drawable(
-                    drawable_key,
-                    clear_previous=False
-                )
+                if subtractive:
+                    self.viewer.deselect_drawable_key(drawable_key)
+                else:
+                    self.viewer.select_drawable(
+                        drawable_key,
+                        clear_previous=False
+                    )
 
-                last_shell_ref = (
-                    mesh_data,
-                    shell_data
-                )
+                    last_shell_ref = (
+                        mesh_data,
+                        shell_data
+                    )
 
                 selected_count += 1
 
-        if last_shell_ref:
+        if last_shell_ref and not subtractive:
             self.active_shell = last_shell_ref
             self.hover_shell = last_shell_ref
 
@@ -2095,9 +2073,8 @@ class EUVDrawer(EDrawableObjectController):
             self.set_active_object(face_ref)
             self.set_hover_object(face_ref)
 
-            additive = bool(
-                event.modifiers() & QtCore.Qt.ShiftModifier
-            )
+            additive = bool(event.modifiers() & QtCore.Qt.ShiftModifier)
+            subtractive = bool(event.modifiers() & QtCore.Qt.ControlModifier)
 
             face_key = self.drawable_key_for_face(
                 mesh_data,
@@ -2105,6 +2082,18 @@ class EUVDrawer(EDrawableObjectController):
             )
 
             already_selected = self.viewer.is_drawable_selected(face_key)
+
+            if subtractive:
+                self.viewer.deselect_drawable_key(face_key)
+
+                if self.active_face == face_ref:
+                    self.active_face = None
+
+                if self.hover_face == face_ref:
+                    self.hover_face = None
+
+                self.viewer.update()
+                return True
 
             # If already selected and not additive, preserve multi-selection for group drag.
             if already_selected and not additive:
@@ -2162,11 +2151,22 @@ class EUVDrawer(EDrawableObjectController):
             shell_data
         )
 
-        additive = bool(
-            event.modifiers() & QtCore.Qt.ShiftModifier
-        )
+        additive = bool(event.modifiers() & QtCore.Qt.ShiftModifier)
+        subtractive = bool(event.modifiers() & QtCore.Qt.ControlModifier)
 
         already_selected = self.viewer.is_drawable_selected(shell_key)
+
+        if subtractive:
+            self.viewer.deselect_drawable_key(shell_key)
+
+            if self.active_shell == shell_ref:
+                self.active_shell = None
+
+            if self.hover_shell == shell_ref:
+                self.hover_shell = None
+
+            self.viewer.update()
+            return True
 
         # If clicked shell is already selected and not additive,
         # preserve multi-selection for group drag.
@@ -2182,7 +2182,7 @@ class EUVDrawer(EDrawableObjectController):
         if additive and event.button() == QtCore.Qt.LeftButton:
             self.viewer.update()
             return True
-
+        
         if event.button() == QtCore.Qt.RightButton:
             self.show_context_menu(
                 event,

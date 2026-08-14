@@ -72,11 +72,14 @@ class ETrimViewer(QtWidgets.QWidget):
         self.is_rect_selecting = False
         self.rect_select_start = None
         self.rect_select_current = None
+
         self.rect_select_additive = False
+        self.rect_select_subtractive = False
 
         self.is_pending_rect_select = False
         self.pending_rect_select_start = None
         self.pending_rect_select_additive = False
+        self.pending_rect_select_subtractive = False
         self.rect_select_start_threshold = 4.0
 
         self.rect_select_fill = QtGui.QColor(255, 220, 80, 35)
@@ -212,6 +215,11 @@ class ETrimViewer(QtWidgets.QWidget):
         self.selected_drawables = []
         self.update()
 
+    def is_ctrl_modifier(self, event):
+        return bool(
+            event.modifiers() & QtCore.Qt.ControlModifier
+        )
+
     def is_shift_modifier(self, event):
         return bool(
             event.modifiers() & QtCore.Qt.ShiftModifier
@@ -258,11 +266,12 @@ class ETrimViewer(QtWidgets.QWidget):
         ).normalized()
 
 
-    def begin_rect_selection(self, pos, additive=False):
+    def begin_rect_selection(self, pos, additive=False, subtractive=False):
         self.is_rect_selecting = True
         self.rect_select_start = QtCore.QPointF(pos)
         self.rect_select_current = QtCore.QPointF(pos)
         self.rect_select_additive = additive
+        self.rect_select_subtractive = subtractive
         self.setCursor(QtCore.Qt.CrossCursor)
         self.update()
 
@@ -281,30 +290,51 @@ class ETrimViewer(QtWidgets.QWidget):
 
         rect = self.get_rect_select_rect()
 
+        additive = self.rect_select_additive
+        subtractive = self.rect_select_subtractive
+
         self.is_rect_selecting = False
         self.rect_select_start = None
         self.rect_select_current = None
+        self.rect_select_additive = False
+        self.rect_select_subtractive = False
 
-        if self.uv_drawer:
+        # Normal rect selection replaces current selection once, globally.
+        if not additive and not subtractive:
+            self.clear_drawable_selection()
+
+        # Boxes can be rect-selected independently from UV mode.
+        if self.box_selection_enabled and self.box_drawer:
+            if hasattr(self.box_drawer, "select_boxes_in_rect"):
+                self.box_drawer.select_boxes_in_rect(
+                    rect,
+                    additive=True,
+                    subtractive=subtractive
+                )
+
+        # UV rect selection follows current UV mode.
+        if self.uv_selection_enabled and self.uv_drawer:
             mode = self.get_uv_selection_mode()
 
             if mode == "face" and hasattr(self.uv_drawer, "select_faces_in_rect"):
                 self.uv_drawer.select_faces_in_rect(
                     rect,
-                    additive=self.rect_select_additive
+                    additive=True,
+                    subtractive=subtractive
                 )
 
             elif mode == "shell" and hasattr(self.uv_drawer, "select_shells_in_rect"):
                 self.uv_drawer.select_shells_in_rect(
                     rect,
-                    additive=self.rect_select_additive
+                    additive=True,
+                    subtractive=subtractive
                 )
 
-        self.rect_select_additive = False
         self.setCursor(QtCore.Qt.ArrowCursor)
         self.update()
+
     #pending rectselection andthreshold
-    def begin_pending_rect_selection(self, pos, additive=False):
+    def begin_pending_rect_selection(self, pos, additive=False, subtractive=False):
         """
         Store a possible rectangle selection.
 
@@ -315,12 +345,14 @@ class ETrimViewer(QtWidgets.QWidget):
         self.is_pending_rect_select = True
         self.pending_rect_select_start = QtCore.QPointF(pos)
         self.pending_rect_select_additive = additive
+        self.pending_rect_select_subtractive = subtractive
 
 
     def cancel_pending_rect_selection(self):
         self.is_pending_rect_select = False
         self.pending_rect_select_start = None
         self.pending_rect_select_additive = False
+        self.pending_rect_select_subtractive = False
 
 
     def pending_rect_selection_distance_sq(self, pos):
@@ -645,12 +677,13 @@ class ETrimViewer(QtWidgets.QWidget):
             if self.should_start_rect_selection(pos):
                 start_pos = self.pending_rect_select_start
                 additive = self.pending_rect_select_additive
+                subtractive = self.pending_rect_select_subtractive
 
                 self.cancel_pending_rect_selection()
 
-                self.begin_rect_selection(
-                    start_pos,
-                    additive=additive
+                self.begin_rect_selection(start_pos,
+                    additive=additive,
+                    subtractive=subtractive
                 )
 
                 self.update_rect_selection(pos)
@@ -746,10 +779,19 @@ class ETrimViewer(QtWidgets.QWidget):
         # Empty click may clear selection.
         # Empty click-drag starts rectangle selection only after a small movement threshold.
         if event.button() == QtCore.Qt.LeftButton:
-            if self.uv_selection_enabled and self.is_uv_selection_mode():
+            can_rect_select = (
+                self.box_selection_enabled or
+                (
+                    self.uv_selection_enabled and
+                    self.is_uv_selection_mode()
+                )
+            )
+
+            if can_rect_select:
                 self.begin_pending_rect_selection(
                     pos,
-                    additive=self.is_shift_modifier(event)
+                    additive=self.is_shift_modifier(event),
+                    subtractive=self.is_ctrl_modifier(event)
                 )
                 return
 
@@ -764,8 +806,14 @@ class ETrimViewer(QtWidgets.QWidget):
     def mouseReleaseEvent(self, event):
         if event.button() == QtCore.Qt.LeftButton:
             if self.is_pending_rect_select:
+                subtractive = self.pending_rect_select_subtractive
+
                 self.cancel_pending_rect_selection()
-                self.deselect_drawables()
+
+                # Empty Ctrl-click should not clear everything.
+                if not subtractive:
+                    self.deselect_drawables()
+
                 return
 
         if event.button() == QtCore.Qt.LeftButton:

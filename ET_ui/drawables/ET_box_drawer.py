@@ -375,6 +375,169 @@ class EBoxDrawer(EDrawableObjectController):
 
         self.viewer.setCursor(QtCore.Qt.ArrowCursor)
 
+    def get_selected_box_ids(self):
+        """
+        Return selected box ids from viewer-owned selection.
+        """
+
+        selected_box_ids = []
+
+        for key in self.viewer.get_selected_drawables_by_type("box"):
+            if not key:
+                continue
+
+            if len(key) < 2:
+                continue
+
+            box_id = key[1]
+
+            if self.model().get_box(box_id):
+                selected_box_ids.append(box_id)
+
+        return selected_box_ids
+
+
+    def get_drag_box_ids_for_click(self, box_id):
+        """
+        If clicked box is already selected, drag all selected boxes.
+        Otherwise drag only clicked box.
+        """
+
+        clicked_key = self.drawable_key_for_box(box_id)
+
+        if self.viewer.is_drawable_selected(clicked_key):
+            selected_box_ids = self.get_selected_box_ids()
+
+            if selected_box_ids:
+                return selected_box_ids
+
+        return [box_id]
+
+
+    def get_static_boxes_for_drag(self):
+        """
+        Return boxes that are not part of the current drag group.
+        """
+
+        drag_ids = set(self.drag_box_ids)
+
+        for other_id in self.model().box_order:
+            if other_id in drag_ids:
+                continue
+
+            other = self.model().get_box(other_id)
+
+            if other:
+                yield other
+
+
+    def clamp_group_drag_delta(self, desired_du, desired_dv):
+        """
+        Clamp drag delta for a group of selected boxes.
+
+        Rules:
+            - selected boxes move together
+            - group stays inside 0-1
+            - group does not overlap non-selected boxes
+            - relative positions between selected boxes are preserved
+        """
+
+        if not self.drag_start_box_values:
+            return 0.0, 0.0
+
+        final_du = desired_du
+
+        # -----------------------------------------------------
+        # Clamp U against tile
+        # -----------------------------------------------------
+
+        for box_id, start in self.drag_start_box_values.items():
+            if start["u_min"] + final_du < 0.0:
+                final_du = -start["u_min"]
+
+            if start["u_max"] + final_du > 1.0:
+                final_du = 1.0 - start["u_max"]
+
+        # -----------------------------------------------------
+        # Clamp U against static boxes
+        # -----------------------------------------------------
+
+        for box_id, start in self.drag_start_box_values.items():
+            candidate_u_min = start["u_min"] + final_du
+            candidate_u_max = start["u_max"] + final_du
+
+            for other in self.get_static_boxes_for_drag():
+                vertical_overlap = not (
+                    start["v_max"] <= other.v_min or
+                    start["v_min"] >= other.v_max
+                )
+
+                if not vertical_overlap:
+                    continue
+
+                if final_du > 0.0:
+                    if start["u_max"] <= other.u_min and candidate_u_max > other.u_min:
+                        final_du = min(
+                            final_du,
+                            other.u_min - start["u_max"]
+                        )
+
+                elif final_du < 0.0:
+                    if start["u_min"] >= other.u_max and candidate_u_min < other.u_max:
+                        final_du = max(
+                            final_du,
+                            other.u_max - start["u_min"]
+                        )
+
+        final_dv = desired_dv
+
+        # -----------------------------------------------------
+        # Clamp V against tile
+        # -----------------------------------------------------
+
+        for box_id, start in self.drag_start_box_values.items():
+            if start["v_min"] + final_dv < 0.0:
+                final_dv = -start["v_min"]
+
+            if start["v_max"] + final_dv > 1.0:
+                final_dv = 1.0 - start["v_max"]
+
+        # -----------------------------------------------------
+        # Clamp V against static boxes
+        # Use U after final_du has already been resolved.
+        # -----------------------------------------------------
+
+        for box_id, start in self.drag_start_box_values.items():
+            moved_u_min = start["u_min"] + final_du
+            moved_u_max = start["u_max"] + final_du
+
+            candidate_v_min = start["v_min"] + final_dv
+            candidate_v_max = start["v_max"] + final_dv
+
+            for other in self.get_static_boxes_for_drag():
+                horizontal_overlap = not (
+                    moved_u_max <= other.u_min or
+                    moved_u_min >= other.u_max
+                )
+
+                if not horizontal_overlap:
+                    continue
+
+                if final_dv > 0.0:
+                    if start["v_max"] <= other.v_min and candidate_v_max > other.v_min:
+                        final_dv = min(
+                            final_dv,
+                            other.v_min - start["v_max"]
+                        )
+
+                elif final_dv < 0.0:
+                    if start["v_min"] >= other.v_max and candidate_v_min < other.v_max:
+                        final_dv = max(
+                            final_dv,
+                            other.v_max - start["v_min"]
+                        )
+
+        return final_du, final_dv
     # -----------------------------------------------------
     # Drag logic
     # -----------------------------------------------------
@@ -388,43 +551,59 @@ class EBoxDrawer(EDrawableObjectController):
         self.is_dragging_box = True
         self.drag_box_id = box_id
 
-        self.begin_drag_object(box_id, pos)
+        self.drag_box_ids = self.get_drag_box_ids_for_click(box_id)
 
-        self.drag_start_box_values = {
-            "u_min": box.u_min,
-            "v_min": box.v_min,
-            "u_max": box.u_max,
-            "v_max": box.v_max
-        }
+        self.begin_drag_object(
+            box_id,
+            pos
+        )
+
+        self.drag_start_box_values = {}
+
+        for drag_box_id in self.drag_box_ids:
+            drag_box = self.model().get_box(drag_box_id)
+
+            if not drag_box:
+                continue
+
+            self.drag_start_box_values[drag_box_id] = {
+                "u_min": drag_box.u_min,
+                "v_min": drag_box.v_min,
+                "u_max": drag_box.u_max,
+                "v_max": drag_box.v_max
+            }
 
         self.model().set_active_box(box_id)
         self.viewer.activeBoxChanged.emit(box_id)
         self.viewer.setCursor(QtCore.Qt.SizeAllCursor)
 
+        print("[eTrim] Begin box drag:")
+        print("        boxes:", self.drag_box_ids)
+
     def update_drag_box(self, pos):
         if not self.is_dragging_box:
             return
 
-        box = self.model().get_box(self.drag_box_id)
-
-        if not box:
+        if not self.drag_start_box_values:
             return
 
-        du, dv = self.get_drag_delta_uv(pos)
-        start = self.drag_start_box_values
+        desired_du, desired_dv = self.get_drag_delta_uv(pos)
 
-        u_min = start["u_min"] + du
-        v_min = start["v_min"] + dv
-        u_max = start["u_max"] + du
-        v_max = start["v_max"] + dv
-
-        self.move_box_clamped(
-            box,
-            u_min,
-            v_min,
-            u_max,
-            v_max
+        final_du, final_dv = self.clamp_group_drag_delta(
+            desired_du,
+            desired_dv
         )
+
+        for box_id, start in self.drag_start_box_values.items():
+            box = self.model().get_box(box_id)
+
+            if not box:
+                continue
+
+            box.u_min = start["u_min"] + final_du
+            box.v_min = start["v_min"] + final_dv
+            box.u_max = start["u_max"] + final_du
+            box.v_max = start["v_max"] + final_dv
 
         self.viewer.boxesChanged.emit()
         self.viewer.update()
@@ -435,6 +614,7 @@ class EBoxDrawer(EDrawableObjectController):
 
         self.is_dragging_box = False
         self.drag_box_id = None
+        self.drag_box_ids = []
         self.drag_start_box_values = None
 
         self.end_drag_object()
@@ -736,6 +916,56 @@ class EBoxDrawer(EDrawableObjectController):
             print("[eTrim] Fit each selected shell inside box:", box.name)
         else:
             print("[eTrim] No selected UV shells to fit individually into box:", box.name)
+
+    def select_boxes_in_rect(self, rect, additive=False, subtractive=False):
+        """
+        Select or deselect boxes whose screen-space rect intersects selection rect.
+        """
+
+        if rect.isNull() or rect.width() < 2.0 or rect.height() < 2.0:
+            return False
+
+        selected_count = 0
+        last_box_id = None
+
+        for box in self.model().iter_boxes_by_z():
+            box_rect = self.viewer.box_to_screen_rect(box)
+
+            if box_rect.isNull():
+                continue
+
+            if not box_rect.intersects(rect):
+                continue
+
+            drawable_key = self.drawable_key_for_box(box.id)
+
+            if subtractive:
+                self.viewer.deselect_drawable_key(drawable_key)
+
+                if self.model().active_box_id == box.id:
+                    self.model().active_box_id = None
+
+            else:
+                self.viewer.select_drawable(
+                    drawable_key,
+                    clear_previous=False
+                )
+
+                last_box_id = box.id
+
+            selected_count += 1
+
+        if last_box_id and not subtractive:
+            self.model().set_active_box(last_box_id)
+            self.set_active_object(last_box_id)
+            self.viewer.activeBoxChanged.emit(last_box_id)
+
+        print("[eTrim] Rect-selected boxes:", selected_count)
+
+        self.viewer.boxesChanged.emit()
+        self.viewer.update()
+
+        return selected_count > 0
     # -----------------------------------------------------
     # Event routing
     # -----------------------------------------------------
@@ -779,30 +1009,73 @@ class EBoxDrawer(EDrawableObjectController):
         pos = event.pos()
         box_id, handle = self.hit_test_box_handle(pos)
 
+        # CRITICAL:
+        # If there is no box under the mouse, this drawer must not consume the event.
+        # This allows the viewer to start empty-space rect selection.
         if not box_id:
             return False
+
+        box_key = self.drawable_key_for_box(box_id)
+
+        additive = bool(
+            event.modifiers() & QtCore.Qt.ShiftModifier
+        )
+
+        subtractive = bool(
+            event.modifiers() & QtCore.Qt.ControlModifier
+        )
+
+        already_selected = self.viewer.is_drawable_selected(box_key)
 
         if event.button() == QtCore.Qt.RightButton:
             self.model().set_active_box(box_id)
             self.set_active_object(box_id)
 
-            self.viewer.select_drawable(
-                self.drawable_key_for_box(box_id),
-                clear_previous=False
-            )
+            if not already_selected:
+                self.viewer.select_drawable(
+                    box_key,
+                    clear_previous=False
+                )
 
             self.viewer.activeBoxChanged.emit(box_id)
             self.show_context_menu(event, box_id)
             self.viewer.update()
             return True
 
+        if subtractive:
+            self.viewer.deselect_drawable_key(box_key)
+
+            if self.model().active_box_id == box_id:
+                self.model().active_box_id = None
+
+            self.clear_active_object()
+            self.viewer.activeBoxChanged.emit(None)
+            self.viewer.boxesChanged.emit()
+            self.viewer.update()
+            return True
+
         self.model().set_active_box(box_id)
         self.set_active_object(box_id)
 
-        self.viewer.select_drawable(
-            self.drawable_key_for_box(box_id),
-            clear_previous=True
-        )
+        # Shift-click adds box to selection and does not immediately drag.
+        if additive:
+            self.viewer.select_drawable(
+                box_key,
+                clear_previous=False
+            )
+
+            self.viewer.activeBoxChanged.emit(box_id)
+            self.viewer.update()
+            return True
+
+        # Normal click:
+        # If clicked box is already selected, preserve multi-selection for drag/context.
+        # Otherwise replace selection.
+        if not already_selected:
+            self.viewer.select_drawable(
+                box_key,
+                clear_previous=True
+            )
 
         self.viewer.activeBoxChanged.emit(box_id)
 
