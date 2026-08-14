@@ -351,14 +351,21 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
 
     def toggle_uv_select_mode(self):
         """
-        Toggle UV interaction between shell selection and face selection.
+        Cycle UV interaction between shell, face, and vertex selection.
         """
 
-        if self.uv_select_mode_btn.isChecked():
-            self.uv_select_mode_btn.setText("On Faces")
+        mode = self.viewer.get_uv_selection_mode()
+
+        if mode == "shell":
+            self.uv_select_mode_btn.setText("Faces")
             self.viewer.uv_drawer.set_selection_mode("face")
+
+        elif mode == "face":
+            self.uv_select_mode_btn.setText("Vertices")
+            self.viewer.uv_drawer.set_selection_mode("vertex")
+
         else:
-            self.uv_select_mode_btn.setText("On Shells")
+            self.uv_select_mode_btn.setText("Shells")
             self.viewer.uv_drawer.set_selection_mode("shell")
 
         self.viewer.update()
@@ -422,10 +429,10 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         uv_mode = self.viewer.get_uv_selection_mode()
 
         if uv_mode == "face":
-            self.uv_select_mode_btn.setChecked(True)
             self.uv_select_mode_btn.setText("Faces")
+        elif uv_mode == "vertex":
+            self.uv_select_mode_btn.setText("Vertices")
         else:
-            self.uv_select_mode_btn.setChecked(False)
             self.uv_select_mode_btn.setText("Shells")
 
     def save_layout_file(self):

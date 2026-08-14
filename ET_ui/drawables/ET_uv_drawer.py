@@ -61,13 +61,18 @@ class EUVDrawer(EDrawableObjectController):
         self.hover_face = None
         self.active_face = None
 
+        self.hover_vertex = None
+        self.active_vertex = None
+
         self.is_dragging_shell = False
         self.is_dragging_face = False
+        self.is_dragging_vertex = False
 
         self.drag_start_positions = None
         self.drag_start_shell_bounds = None
 
         self.shell_hit_pixel_distance = 8.0
+        self.vertex_hit_pixel_distance = 8.0
 
     FIT_MODE_STRETCH_FILL = "stretch_fill"
     FIT_MODE_UNIFORM_INSIDE = "uniform_inside"
@@ -127,7 +132,7 @@ class EUVDrawer(EDrawableObjectController):
             "face"
         """
 
-        if mode not in ("shell", "face"):
+        if mode not in ("shell", "face", "vertex"):
             return
 
         self.selection_mode = mode
@@ -136,6 +141,8 @@ class EUVDrawer(EDrawableObjectController):
         self.active_shell = None
         self.hover_face = None
         self.active_face = None
+        self.hover_vertex = None
+        self.active_vertex = None
 
         self.clear_hover_object()
         self.clear_active_object()
@@ -180,6 +187,26 @@ class EUVDrawer(EDrawableObjectController):
         return (
             ref_mesh_data is mesh_data and
             ref_shell_data is shell_data
+        )
+
+    def drawable_key_for_vertex(self, mesh_data, uv_id):
+        return (
+            "uv_vertex",
+            mesh_data.mesh_name,
+            mesh_data.uv_set,
+            uv_id
+        )
+
+
+    def vertex_ref_matches(self, vertex_ref, mesh_data, uv_id):
+        if not vertex_ref:
+            return False
+
+        ref_mesh_data, ref_uv_id = vertex_ref
+
+        return (
+            ref_mesh_data is mesh_data and
+            ref_uv_id == uv_id
         )
 
     def drawable_key_for_face(self, mesh_data, face_index):
@@ -522,6 +549,60 @@ class EUVDrawer(EDrawableObjectController):
                 uv_id,
                 self.vertex_radius
             )
+
+        # -----------------------------------------------------
+        # Vertex mode overlay: selected/hovered/active vertices
+        # -----------------------------------------------------
+
+        if self.selection_mode == "vertex":
+            highlighted_uv_ids = {}
+
+            for uv_id in shell_data.uv_ids:
+                is_vertex_hovered = self.vertex_ref_matches(
+                    self.hover_vertex,
+                    mesh_data,
+                    uv_id
+                )
+
+                is_vertex_active = self.vertex_ref_matches(
+                    self.active_vertex,
+                    mesh_data,
+                    uv_id
+                )
+
+                is_vertex_selected = self.viewer.is_drawable_selected(
+                    self.drawable_key_for_vertex(
+                        mesh_data,
+                        uv_id
+                    )
+                )
+
+                if is_vertex_active or is_vertex_selected:
+                    highlighted_uv_ids[uv_id] = "active"
+
+                elif is_vertex_hovered:
+                    highlighted_uv_ids[uv_id] = "hover"
+
+            for uv_id, state in highlighted_uv_ids.items():
+                if state == "active":
+                    color = self.active_vertex_color
+                    radius = self.active_vertex_radius
+                else:
+                    color = self.hover_vertex_color
+                    radius = self.hover_vertex_radius
+
+                painter.setBrush(
+                    QtGui.QBrush(color)
+                )
+
+                self.draw_uv_vertex(
+                    painter,
+                    mesh_data,
+                    uv_id,
+                    radius
+                )
+
+            return
 
         # -----------------------------------------------------
         # Shell mode overlay: boundary vertices only
@@ -932,6 +1013,31 @@ class EUVDrawer(EDrawableObjectController):
             box
         )
 
+    def fit_selected_vertices_to_box(self, box):
+        """
+        Fit currently selected UV vertices into one trim box.
+        """
+
+        if not box:
+            return False
+
+        uv_pairs = self.get_uv_pairs_from_selected_drawables(
+            "uv_vertex"
+        )
+
+        if not uv_pairs:
+            return False
+
+        result = self.fit_uv_pairs_to_box(
+            uv_pairs,
+            box
+        )
+
+        if result:
+            print("[eTrim] Fit selected UV vertices into box:", box.name)
+
+        return result
+
     def fit_each_selected_shell_to_box(self, box):
         """
         Fit each selected UV shell individually into one trim box.
@@ -1279,23 +1385,84 @@ class EUVDrawer(EDrawableObjectController):
 
         return hasattr(shell_data, "shell_id")
 
-
-    def get_selected_shell_keys(self):
+    def get_selected_vertex_keys(self):
         """
-        Return all selected drawable keys that represent UV shells.
+        Return all selected drawable keys that represent UV vertices.
         """
 
-        selected = []
+        return self.viewer.get_selected_drawables_by_type("uv_vertex")
 
-        for key in self.viewer.selected_drawables:
-            if not key:
+
+    def get_vertex_from_drawable_key(self, drawable_key):
+        """
+        Convert a viewer drawable key back into:
+            mesh_data, uv_id
+        """
+
+        if not drawable_key:
+            return None, None
+
+        if drawable_key[0] != "uv_vertex":
+            return None, None
+
+        _, mesh_name, uv_set, uv_id = drawable_key
+
+        if not self.has_cache():
+            return None, None
+
+        cache = self.get_cache()
+
+        for mesh_data in cache.meshes:
+            if mesh_data.mesh_name != mesh_name:
                 continue
 
-            if key[0] == "uv_shell":
-                selected.append(key)
+            if mesh_data.uv_set != uv_set:
+                continue
 
-        return selected
+            if uv_id in mesh_data.uv_positions:
+                return mesh_data, uv_id
 
+            if (
+                hasattr(mesh_data, "preview_uv_positions") and
+                uv_id in mesh_data.preview_uv_positions
+            ):
+                return mesh_data, uv_id
+
+        return None, None
+
+
+    def get_uv_pairs_from_selected_vertices(self):
+        """
+        Return unique UV pairs from all selected UV vertices.
+        """
+
+        uv_pairs = []
+        seen = set()
+
+        for key in self.get_selected_vertex_keys():
+            mesh_data, uv_id = self.get_vertex_from_drawable_key(key)
+
+            if not mesh_data:
+                continue
+
+            pair_key = (
+                id(mesh_data),
+                uv_id
+            )
+
+            if pair_key in seen:
+                continue
+
+            seen.add(pair_key)
+
+            uv_pairs.append(
+                (
+                    mesh_data,
+                    uv_id
+                )
+            )
+
+        return uv_pairs
 
     def get_shell_from_drawable_key(self, drawable_key):
         """
@@ -1455,6 +1622,91 @@ class EUVDrawer(EDrawableObjectController):
     # -----------------------------------------------------
     # Selection
     # -----------------------------------------------------
+
+    def select_vertices_in_rect(self, rect, additive=False, subtractive=False):
+        """
+        Select or deselect UV vertices whose screen-space point is inside rect.
+        """
+
+        if not self.has_cache():
+            return False
+
+        if rect.isNull() or rect.width() < 2.0 or rect.height() < 2.0:
+            return False
+
+        selected_count = 0
+        last_vertex_ref = None
+
+        cache = self.get_cache()
+
+        for mesh_data in cache.meshes:
+            uv_ids = []
+
+            if hasattr(mesh_data, "preview_uv_positions"):
+                uv_ids = list(mesh_data.preview_uv_positions.keys())
+            else:
+                uv_ids = list(mesh_data.uv_positions.keys())
+
+            for uv_id in uv_ids:
+                point = self.uv_point_to_screen(
+                    mesh_data,
+                    uv_id
+                )
+
+                if not rect.contains(point):
+                    continue
+
+                drawable_key = self.drawable_key_for_vertex(
+                    mesh_data,
+                    uv_id
+                )
+
+                if subtractive:
+                    self.viewer.deselect_drawable_key(drawable_key)
+
+                    if self.vertex_ref_matches(
+                        self.active_vertex,
+                        mesh_data,
+                        uv_id
+                    ):
+                        self.active_vertex = None
+
+                    if self.vertex_ref_matches(
+                        self.hover_vertex,
+                        mesh_data,
+                        uv_id
+                    ):
+                        self.hover_vertex = None
+
+                else:
+                    self.viewer.select_drawable(
+                        drawable_key,
+                        clear_previous=False
+                    )
+
+                    last_vertex_ref = (
+                        mesh_data,
+                        uv_id
+                    )
+
+                selected_count += 1
+
+        if last_vertex_ref and not subtractive:
+            self.active_vertex = last_vertex_ref
+            self.hover_vertex = last_vertex_ref
+
+            self.active_shell = None
+            self.hover_shell = None
+            self.active_face = None
+            self.hover_face = None
+
+            self.set_active_object(last_vertex_ref)
+            self.set_hover_object(last_vertex_ref)
+
+        print("[eTrim] Rect-selected UV vertices:", selected_count)
+
+        self.viewer.update()
+        return selected_count > 0
 
     def select_faces_in_rect(self, rect, additive=False, subtractive=False):
         """
@@ -1642,6 +1894,14 @@ class EUVDrawer(EDrawableObjectController):
 
                 source_uv_ids = face_uv_ids
 
+            elif drawable_type == "uv_vertex":
+                mesh_data, uv_id = self.get_vertex_from_drawable_key(key)
+
+                if not mesh_data:
+                    continue
+
+                source_uv_ids = [uv_id]
+
             else:
                 continue
 
@@ -1699,6 +1959,45 @@ class EUVDrawer(EDrawableObjectController):
 
                     if distance_sq <= threshold_sq:
                         return mesh_data, shell_data
+
+        return None, None
+
+    def hit_test_vertex(self, pos):
+        """
+        Return:
+            (mesh_data, uv_id) or (None, None)
+
+        Vertex mode uses screen-space point distance.
+        """
+
+        if not self.has_cache():
+            return None, None
+
+        threshold_sq = self.vertex_hit_pixel_distance * self.vertex_hit_pixel_distance
+
+        cache = self.get_cache()
+
+        for mesh_data in reversed(cache.meshes):
+            uv_ids = []
+
+            if hasattr(mesh_data, "preview_uv_positions"):
+                uv_ids = list(mesh_data.preview_uv_positions.keys())
+            else:
+                uv_ids = list(mesh_data.uv_positions.keys())
+
+            for uv_id in reversed(uv_ids):
+                point = self.uv_point_to_screen(
+                    mesh_data,
+                    uv_id
+                )
+
+                dx = float(pos.x()) - float(point.x())
+                dy = float(pos.y()) - float(point.y())
+
+                distance_sq = dx * dx + dy * dy
+
+                if distance_sq <= threshold_sq:
+                    return mesh_data, uv_id
 
         return None, None
 
@@ -2097,6 +2396,95 @@ class EUVDrawer(EDrawableObjectController):
 
         return uv_pairs
 
+    def begin_drag_vertex(self, mesh_data, uv_id, pos):
+        if not hasattr(mesh_data, "preview_uv_positions"):
+            mesh_data.preview_uv_positions = dict(mesh_data.uv_positions)
+
+        vertex_key = self.drawable_key_for_vertex(
+            mesh_data,
+            uv_id
+        )
+
+        vertex_ref = (
+            mesh_data,
+            uv_id
+        )
+
+        self.is_dragging_vertex = True
+        self.active_vertex = vertex_ref
+        self.hover_vertex = vertex_ref
+
+        self.active_shell = None
+        self.hover_shell = None
+        self.active_face = None
+        self.hover_face = None
+
+        self.set_active_object(vertex_ref)
+        self.set_hover_object(vertex_ref)
+
+        self.begin_drag_object(
+            vertex_ref,
+            pos
+        )
+
+        if self.viewer.is_drawable_selected(vertex_key):
+            uv_pairs = self.get_uv_pairs_from_selected_drawables(
+                "uv_vertex"
+            )
+        else:
+            uv_pairs = [
+                (
+                    mesh_data,
+                    uv_id
+                )
+            ]
+
+        self.build_drag_start_from_uv_pairs(
+            uv_pairs
+        )
+
+        self.viewer.setCursor(QtCore.Qt.SizeAllCursor)
+        self.viewer.update()
+
+
+    def update_drag_vertex(self, pos):
+        if not self.is_dragging_vertex:
+            return
+
+        if not self.active_vertex:
+            return
+
+        du, dv = self.get_drag_delta_uv(pos)
+
+        for drag_data in self.drag_start_positions.values():
+            mesh_data, uv_id, start_pos = drag_data
+            original_u, original_v = start_pos
+
+            mesh_data.preview_uv_positions[uv_id] = (
+                original_u + du,
+                original_v + dv
+            )
+
+        self.viewer.update()
+
+
+    def end_drag_vertex(self):
+        if not self.is_dragging_vertex:
+            return
+
+        self.is_dragging_vertex = False
+        self.drag_start_positions = None
+        self.drag_start_shell_bounds = None
+
+        self.end_drag_object()
+
+        if self.hover_vertex:
+            self.viewer.setCursor(QtCore.Qt.SizeAllCursor)
+        else:
+            self.viewer.setCursor(QtCore.Qt.ArrowCursor)
+
+        self.viewer.update()
+
     def begin_drag_face(self, mesh_data, face_index, face_uv_ids, pos):
         if not hasattr(mesh_data, "preview_uv_positions"):
             mesh_data.preview_uv_positions = dict(mesh_data.uv_positions)
@@ -2215,6 +2603,34 @@ class EUVDrawer(EDrawableObjectController):
             self.update_drag_face(pos)
             return True
 
+        if self.is_dragging_vertex:
+            self.update_drag_vertex(pos)
+            return True
+
+        if self.selection_mode == "vertex":
+            mesh_data, uv_id = self.hit_test_vertex(pos)
+
+            if mesh_data is not None and uv_id is not None:
+                new_hover = (
+                    mesh_data,
+                    uv_id
+                )
+            else:
+                new_hover = None
+
+            if new_hover != self.hover_vertex:
+                self.hover_vertex = new_hover
+                self.set_hover_object(new_hover)
+
+                if self.hover_vertex:
+                    self.viewer.setCursor(QtCore.Qt.SizeAllCursor)
+                else:
+                    self.viewer.setCursor(QtCore.Qt.ArrowCursor)
+
+                self.viewer.update()
+
+            return False
+
         if self.selection_mode == "face":
             mesh_data, face_index, face_uv_ids = self.hit_test_face(pos)
 
@@ -2269,6 +2685,80 @@ class EUVDrawer(EDrawableObjectController):
             return False
 
         pos = event.pos()
+
+        if self.selection_mode == "vertex":
+            mesh_data, uv_id = self.hit_test_vertex(pos)
+
+            if mesh_data is None or uv_id is None:
+                return False
+
+            vertex_ref = (
+                mesh_data,
+                uv_id
+            )
+
+            self.active_vertex = vertex_ref
+            self.hover_vertex = vertex_ref
+
+            self.active_shell = None
+            self.hover_shell = None
+            self.active_face = None
+            self.hover_face = None
+
+            self.set_active_object(vertex_ref)
+            self.set_hover_object(vertex_ref)
+
+            additive = bool(event.modifiers() & QtCore.Qt.ShiftModifier)
+            subtractive = bool(event.modifiers() & QtCore.Qt.ControlModifier)
+
+            vertex_key = self.drawable_key_for_vertex(
+                mesh_data,
+                uv_id
+            )
+
+            already_selected = self.viewer.is_drawable_selected(vertex_key)
+
+            if subtractive:
+                self.viewer.deselect_drawable_key(vertex_key)
+
+                if self.active_vertex == vertex_ref:
+                    self.active_vertex = None
+
+                if self.hover_vertex == vertex_ref:
+                    self.hover_vertex = None
+
+                self.viewer.update()
+                return True
+
+            if already_selected and not additive:
+                pass
+            else:
+                self.viewer.select_drawable(
+                    vertex_key,
+                    clear_previous=not additive
+                )
+
+            # Shift-click selects/adds but does not immediately drag.
+            if additive and event.button() == QtCore.Qt.LeftButton:
+                self.viewer.update()
+                return True
+
+            if event.button() == QtCore.Qt.RightButton:
+                self.show_context_menu(
+                    event,
+                    vertex_ref
+                )
+
+                self.viewer.update()
+                return True
+
+            self.begin_drag_vertex(
+                mesh_data,
+                uv_id,
+                pos
+            )
+
+            return True
 
         if self.selection_mode == "face":
             mesh_data, face_index, face_uv_ids = self.hit_test_face(pos)
@@ -2430,14 +2920,24 @@ class EUVDrawer(EDrawableObjectController):
             self.end_drag_face()
             return True
 
+        if self.is_dragging_vertex:
+            self.end_drag_vertex()
+            return True
+
         return False
 
     def leave_event(self, event):
-        if self.is_dragging_shell or self.is_dragging_face:
+        if self.is_dragging_shell or self.is_dragging_face or self.is_dragging_vertex:
             return
 
         self.hover_shell = None
+        self.active_shell = None
+
         self.hover_face = None
+        self.active_face = None
+
+        self.hover_vertex = None
+        self.active_vertex = None
 
         self.viewer.setCursor(QtCore.Qt.ArrowCursor)
         self.viewer.update()

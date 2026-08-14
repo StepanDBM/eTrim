@@ -941,6 +941,14 @@ class EBoxDrawer(EDrawableObjectController):
 
         result = False
 
+        # 0. First priority: selected UV vertices.
+        if hasattr(self.viewer.uv_drawer, "fit_selected_vertices_to_box"):
+            result = self.viewer.uv_drawer.fit_selected_vertices_to_box(box)
+
+        if result:
+            print("[eTrim] Fit selected UV vertices inside box:", box.name)
+            return
+
         # 1. First priority: selected UV faces.
         if hasattr(self.viewer.uv_drawer, "fit_selected_faces_to_box"):
             result = self.viewer.uv_drawer.fit_selected_faces_to_box(box)

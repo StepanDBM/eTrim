@@ -242,7 +242,8 @@ class ETrimViewer(QtWidgets.QWidget):
 
         return self.get_uv_selection_mode() in (
             "shell",
-            "face"
+            "face",
+            "vertex"
         )
 
     def is_uv_face_selection_mode(self):
@@ -316,7 +317,14 @@ class ETrimViewer(QtWidgets.QWidget):
         if self.uv_selection_enabled and self.uv_drawer:
             mode = self.get_uv_selection_mode()
 
-            if mode == "face" and hasattr(self.uv_drawer, "select_faces_in_rect"):
+            if mode == "vertex" and hasattr(self.uv_drawer, "select_vertices_in_rect"):
+                self.uv_drawer.select_vertices_in_rect(
+                    rect,
+                    additive=True,
+                    subtractive=subtractive
+                )
+
+            elif mode == "face" and hasattr(self.uv_drawer, "select_faces_in_rect"):
                 self.uv_drawer.select_faces_in_rect(
                     rect,
                     additive=True,
