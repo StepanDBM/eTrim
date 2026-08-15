@@ -11,6 +11,7 @@ MODULES_TO_RELOAD = [
     "ET_core.ET_texture_finder",
     "ET_core.ET_uv_unwrap",
     "ET_core.ET_gridify",
+    "ET_core.ET_heatmap",
 
     "ET_ui.ET_style",
     "ET_ui.drawables.ET_drawable_object",

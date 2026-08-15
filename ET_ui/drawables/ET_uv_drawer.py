@@ -109,6 +109,7 @@ class EUVDrawer(EDrawableObjectController):
         self.vertex_hit_pixel_distance = 8.0
 
         self.stretch_heatmap_enabled = False
+        self.stretch_heatmap_mode = "severity"
         self.stretch_heatmap_calculator = EStretchHeatMapCalculator()
     # -----------------------------------------------------
     # Cache
@@ -772,14 +773,14 @@ class EUVDrawer(EDrawableObjectController):
             )
 
             if self.stretch_heatmap_enabled:
-                stretch = self.stretch_heatmap_calculator.get_face_stretch(
-                    mesh_data,
-                    face_index
-                )
+                if self.stretch_heatmap_mode == "signed":
+                    ratio = self.stretch_heatmap_calculator.get_face_density_ratio(mesh_data, face_index)
+                    color = self.color_for_signed_stretch_ratio(ratio)
 
-                color = self.color_for_stretch_value(
-                    stretch
-                )
+                else:
+                    stretch = self.stretch_heatmap_calculator.get_face_stretch(mesh_data, face_index)
+
+                    color = self.color_for_stretch_value(stretch)
 
             else:
                 color = self.face_color
@@ -787,37 +788,22 @@ class EUVDrawer(EDrawableObjectController):
                 if self.selection_mode != self.MODE_SHELL:
                     if (
                         self.face_ref_matches(self.active_face, mesh_data, face_index) or
-                        self.viewer.is_drawable_selected(
-                            self.drawable_key_for_face(
-                                mesh_data,
-                                face_index
-                            )
-                        )
+                        self.viewer.is_drawable_selected(self.drawable_key_for_face(mesh_data, face_index))
                     ):
                         color = self.active_face_color
 
                     elif self.face_ref_matches(self.hover_face, mesh_data, face_index):
                         color = self.hover_face_color
 
-            painter.setBrush(
-                QtGui.QBrush(color)
-            )
+            painter.setBrush(QtGui.QBrush(color))
 
-            polygon = self.uv_polygon_for_face(
-                mesh_data,
-                face_uv_ids
-            )
+            polygon = self.uv_polygon_for_face(mesh_data, face_uv_ids)
 
             if not polygon.isEmpty():
                 painter.drawPolygon(polygon)
 
     def draw_shell_edges(self, painter, mesh_data, shell_data, is_hovered, is_active):
-        painter.setPen(
-            QtGui.QPen(
-                self.edge_color,
-                self.edge_width
-            )
-        )
+        painter.setPen(QtGui.QPen(self.edge_color, self.edge_width))
 
         painter.setBrush(QtCore.Qt.NoBrush)
 
@@ -1089,6 +1075,23 @@ class EUVDrawer(EDrawableObjectController):
         self.stretch_heatmap_enabled = bool(enabled)
         self.viewer.update()
 
+    def set_stretch_heatmap_mode(self, mode):
+        if mode not in ("severity", "signed"):
+            return
+
+        self.stretch_heatmap_mode = mode
+        self.stretch_heatmap_enabled = True
+        self.viewer.update()
+
+
+    def set_stretch_heatmap_enabled(self, enabled):
+        self.stretch_heatmap_enabled = bool(enabled)
+        self.viewer.update()
+
+
+    def toggle_stretch_heatmap(self):
+        self.stretch_heatmap_enabled = not self.stretch_heatmap_enabled
+        self.viewer.update()
 
     def toggle_stretch_heatmap(self):
         self.stretch_heatmap_enabled = not self.stretch_heatmap_enabled
@@ -1141,6 +1144,54 @@ class EUVDrawer(EDrawableObjectController):
         return self.lerp_color(
             yellow,
             red,
+            t
+        )
+
+    def color_for_signed_stretch_ratio(self, ratio):
+        """
+        Signed stretch color.
+
+        ratio == 1.0:
+            white, neutral
+
+        ratio > 1.0:
+            red, UV density is larger than median
+
+        ratio < 1.0:
+            blue, UV density is smaller than median
+        """
+
+        white = QtGui.QColor(245, 245, 245, 115)
+        red = QtGui.QColor(255, 55, 45, 150)
+        blue = QtGui.QColor(45, 130, 255, 150)
+
+        if ratio <= 0.000000001:
+            return blue
+
+        # Symmetric response:
+        # ratio 2.0 and ratio 0.5 should have similar intensity.
+        if ratio >= 1.0:
+            t = min(
+                1.0,
+                (ratio - 1.0) / 2.0
+            )
+
+            return self.lerp_color(
+                white,
+                red,
+                t
+            )
+
+        inverse_ratio = 1.0 / ratio
+
+        t = min(
+            1.0,
+            (inverse_ratio - 1.0) / 2.0
+        )
+
+        return self.lerp_color(
+            white,
+            blue,
             t
         )
 
@@ -2306,11 +2357,24 @@ class EUVDrawer(EDrawableObjectController):
 
         menu.addSeparator()
 
-        heatmap_action = menu.addAction("Stretch Heatmap")
-        heatmap_action.setCheckable(True)
-        heatmap_action.setChecked(self.stretch_heatmap_enabled)
+        heatmap_menu = menu.addMenu("Stretch Heatmap")
 
-        heatmap_action.triggered.connect(self.toggle_stretch_heatmap)
+        heatmap_enabled_action = heatmap_menu.addAction("Enabled")
+        heatmap_enabled_action.setCheckable(True)
+        heatmap_enabled_action.setChecked(self.stretch_heatmap_enabled)
+        heatmap_enabled_action.triggered.connect(self.toggle_stretch_heatmap)
+
+        heatmap_menu.addSeparator()
+
+        severity_action = heatmap_menu.addAction("Severity: Green / Yellow / Red")
+        severity_action.setCheckable(True)
+        severity_action.setChecked(self.stretch_heatmap_mode == "severity")
+        severity_action.triggered.connect(lambda checked=False: self.set_stretch_heatmap_mode("severity"))
+
+        signed_action = heatmap_menu.addAction("Signed: Blue / White / Red")
+        signed_action.setCheckable(True)
+        signed_action.setChecked(self.stretch_heatmap_mode == "signed")
+        signed_action.triggered.connect(lambda checked=False: self.set_stretch_heatmap_mode("signed"))
 
         if self.selection_mode == self.MODE_FACE:
             menu.addSeparator()
