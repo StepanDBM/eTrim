@@ -11,6 +11,7 @@ from ET_ui.drawables.ET_drawable_object import EDrawableObjectController
 from ET_core import ET_uv_model
 from ET_core import ET_uv_unwrap
 from ET_core import ET_gridify
+from ET_core.ET_heatmap import EStretchHeatMapCalculator
 
 
 class EUVDrawer(EDrawableObjectController):
@@ -107,6 +108,8 @@ class EUVDrawer(EDrawableObjectController):
         self.shell_hit_pixel_distance = 8.0
         self.vertex_hit_pixel_distance = 8.0
 
+        self.stretch_heatmap_enabled = False
+        self.stretch_heatmap_calculator = EStretchHeatMapCalculator()
     # -----------------------------------------------------
     # Cache
     # -----------------------------------------------------
@@ -705,6 +708,9 @@ class EUVDrawer(EDrawableObjectController):
         if not uv_cache.has_data():
             return
 
+        if self.stretch_heatmap_enabled:
+            self.stretch_heatmap_calculator.compute(uv_cache)
+
         for mesh_data in uv_cache.meshes:
             for shell_data in mesh_data.shells:
                 is_hovered = self.shell_matches(
@@ -765,22 +771,33 @@ class EUVDrawer(EDrawableObjectController):
                 face_uv_ids
             )
 
-            color = self.face_color
+            if self.stretch_heatmap_enabled:
+                stretch = self.stretch_heatmap_calculator.get_face_stretch(
+                    mesh_data,
+                    face_index
+                )
 
-            if self.selection_mode != self.MODE_SHELL:
-                if (
-                    self.face_ref_matches(self.active_face, mesh_data, face_index) or
-                    self.viewer.is_drawable_selected(
-                        self.drawable_key_for_face(
-                            mesh_data,
-                            face_index
+                color = self.color_for_stretch_value(
+                    stretch
+                )
+
+            else:
+                color = self.face_color
+
+                if self.selection_mode != self.MODE_SHELL:
+                    if (
+                        self.face_ref_matches(self.active_face, mesh_data, face_index) or
+                        self.viewer.is_drawable_selected(
+                            self.drawable_key_for_face(
+                                mesh_data,
+                                face_index
+                            )
                         )
-                    )
-                ):
-                    color = self.active_face_color
+                    ):
+                        color = self.active_face_color
 
-                elif self.face_ref_matches(self.hover_face, mesh_data, face_index):
-                    color = self.hover_face_color
+                    elif self.face_ref_matches(self.hover_face, mesh_data, face_index):
+                        color = self.hover_face_color
 
             painter.setBrush(
                 QtGui.QBrush(color)
@@ -1066,6 +1083,66 @@ class EUVDrawer(EDrawableObjectController):
         )
 
         painter.drawEllipse(rect)
+
+
+    def set_stretch_heatmap_enabled(self, enabled):
+        self.stretch_heatmap_enabled = bool(enabled)
+        self.viewer.update()
+
+
+    def toggle_stretch_heatmap(self):
+        self.stretch_heatmap_enabled = not self.stretch_heatmap_enabled
+        self.viewer.update()
+
+
+    def lerp_color(self, color_a, color_b, t):
+        t = max(
+            0.0,
+            min(
+                1.0,
+                float(t)
+            )
+        )
+
+        return QtGui.QColor(
+            int(color_a.red() + (color_b.red() - color_a.red()) * t),
+            int(color_a.green() + (color_b.green() - color_a.green()) * t),
+            int(color_a.blue() + (color_b.blue() - color_a.blue()) * t),
+            int(color_a.alpha() + (color_b.alpha() - color_a.alpha()) * t)
+        )
+
+
+    def color_for_stretch_value(self, stretch):
+        """
+        Convert stretch grade into a face fill color.
+        """
+
+        green = QtGui.QColor(80, 255, 120, 95)
+        yellow = QtGui.QColor(255, 220, 60, 115)
+        red = QtGui.QColor(255, 70, 40, 135)
+
+        if stretch <= 1.0:
+            return green
+
+        if stretch <= 1.5:
+            t = (stretch - 1.0) / 0.5
+
+            return self.lerp_color(
+                green,
+                yellow,
+                t
+            )
+
+        t = min(
+            1.0,
+            (stretch - 1.5) / 1.5
+        )
+
+        return self.lerp_color(
+            yellow,
+            red,
+            t
+        )
 
     # -----------------------------------------------------
     # Hit testing
@@ -2226,6 +2303,14 @@ class EUVDrawer(EDrawableObjectController):
 
         unwrap_gridify_action = menu.addAction("Native Unwrap + Gridify")
         unwrap_gridify_action.triggered.connect(self.native_unwrap_and_gridify_selected_uvs)
+
+        menu.addSeparator()
+
+        heatmap_action = menu.addAction("Stretch Heatmap")
+        heatmap_action.setCheckable(True)
+        heatmap_action.setChecked(self.stretch_heatmap_enabled)
+
+        heatmap_action.triggered.connect(self.toggle_stretch_heatmap)
 
         if self.selection_mode == self.MODE_FACE:
             menu.addSeparator()

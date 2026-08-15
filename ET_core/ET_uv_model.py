@@ -6,6 +6,7 @@ from collections import defaultdict, deque
 from maya import cmds
 import maya.api.OpenMaya as om
 
+from ET_core.ET_heatmap import EStretchHeatMapCalculator
 
 _FACE_RE = re.compile(r"(.+)\.f\[(\d+)\]$")
 
@@ -46,6 +47,9 @@ class EUVMeshUVData(object):
 
         # [EUVShellData, ...]
         self.shells = []
+        
+        # face index in mesh_data.faces -> world/object-space polygon area
+        self.face_world_areas = []
 
 
 class EUVCache(object):
@@ -199,6 +203,7 @@ def build_mesh_uv_data(object_name, face_ids):
 
     unique_edges = set()
     face_id_set = set(face_ids)
+    world_points = mesh_fn.getPoints(om.MSpace.kWorld)
 
     for polygon_id in sorted(face_id_set):
         vertex_count = mesh_fn.polygonVertexCount(polygon_id)
@@ -223,6 +228,17 @@ def build_mesh_uv_data(object_name, face_ids):
 
         mesh_data.faces.append(face_uv_ids)
         mesh_data.face_polygon_ids.append(polygon_id)
+
+        polygon_vertex_ids = mesh_fn.getPolygonVertices(polygon_id)
+
+        polygon_world_points = [
+            world_points[vertex_id]
+            for vertex_id in polygon_vertex_ids
+        ]
+
+        mesh_data.face_world_areas.append(
+            EStretchHeatMapCalculator.polygon_area_3d(polygon_world_points)
+            )
 
         for i, uv_a in enumerate(face_uv_ids):
             uv_b = face_uv_ids[(i + 1) % len(face_uv_ids)]

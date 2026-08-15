@@ -624,9 +624,7 @@ def gridify_viewer_selection_to_preview(viewer):
         print("[eTrim] Empty UV cache. Gridify skipped.")
         return False
 
-    uv_pairs = get_gridify_uv_pairs(
-        viewer
-    )
+    uv_pairs = get_gridify_uv_pairs(viewer)
 
     if not uv_pairs:
         print("[eTrim] No selected UVs found for gridify.")
