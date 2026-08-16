@@ -168,6 +168,14 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
             tooltip="Show or hide base color texture behind the UVs."
         )
 
+        self.backdrop_source_mode_btn = ET_style.create_toggle_button("Shader",
+            checked=False, tooltip="Switch backdrop source between shader texture and chosen image file."
+        )
+
+        self.choose_backdrop_image_btn = ET_style.create_action_button("Choose Img",
+            tooltip="Choose an image file to use as the UV backdrop. This overrides the shader texture."
+        )
+
         self.backdrop_opacity_spin = QtWidgets.QSpinBox()
         self.backdrop_opacity_spin.setRange(0, 100)
         self.backdrop_opacity_spin.setValue(15)
@@ -191,6 +199,8 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         toolbar_layout.addStretch()
 
         toolbar_layout.addWidget(self.backdrop_image_btn)
+        toolbar_layout.addWidget(self.backdrop_source_mode_btn)
+        toolbar_layout.addWidget(self.choose_backdrop_image_btn)
         toolbar_layout.addWidget(self.backdrop_opacity_spin)
 
         main_layout.addLayout(toolbar_layout)
@@ -281,7 +291,10 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         self.uv_mode_vertex_btn.clicked.connect(lambda: self.set_uv_select_mode("vertex"))
         
         self.backdrop_image_btn.clicked.connect(self.toggle_backdrop_image)
+        self.backdrop_source_mode_btn.clicked.connect(self.toggle_backdrop_source_mode)
+        self.choose_backdrop_image_btn.clicked.connect(self.choose_backdrop_image_file)
         self.backdrop_opacity_spin.valueChanged.connect(self.set_backdrop_opacity)
+
         self.apply_btn.clicked.connect(self.apply_preview)
 
         self.save_layout_btn.clicked.connect(self.save_layout_file)
@@ -334,13 +347,21 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         """
         Toggle backdrop image display.
 
-        If turning on and no image is loaded yet, try to discover one from uv_cache.
+        The active source can be:
+            - shader
+            - file
         """
 
         enabled = self.backdrop_image_btn.isChecked()
 
-        if enabled:
-            if self.viewer.backdrop_image.isNull():
+        if not enabled:
+            self.viewer.set_backdrop_enabled(False)
+            return
+
+        source_mode = self.viewer.get_backdrop_source_mode()
+
+        if source_mode == "shader":
+            if not self.viewer.backdrop_shader_image_path:
                 result = self.try_load_backdrop_image_from_cache(
                     self.viewer.uv_cache
                 )
@@ -350,10 +371,154 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
                     self.viewer.set_backdrop_enabled(False)
                     return
 
+            self.viewer.set_backdrop_source_mode(
+                "shader"
+            )
+
+            self.viewer.set_backdrop_enabled(True)
+            return
+
+        if source_mode == "file":
+            if not self.viewer.backdrop_file_image_path:
+                result = self.choose_backdrop_image_file()
+
+                if not result:
+                    self.backdrop_image_btn.setChecked(False)
+                    self.viewer.set_backdrop_enabled(False)
+                    return
+
+            self.viewer.set_backdrop_source_mode(
+                "file"
+            )
+
+            self.viewer.set_backdrop_enabled(True)
+            return
+
+    def choose_backdrop_image_file(self):
+        """
+        Choose a manual image file for the backdrop.
+
+        Choosing a file immediately switches source mode to file and overrides
+        shader display.
+        """
+
+        file_path, selected_filter = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Choose Backdrop Image",
+            "",
+            "Images (*.png *.jpg *.jpeg *.tif *.tiff *.bmp *.webp);;All Files (*.*)"
+        )
+
+        if not file_path:
+            return False
+
+        result = self.viewer.set_file_backdrop_image_path(
+            file_path
+        )
+
+        if not result:
+            return False
+
+        self.backdrop_source_mode_btn.setChecked(True)
+        self.backdrop_source_mode_btn.setText("File")
+
+        self.backdrop_image_btn.setChecked(True)
+        self.viewer.set_backdrop_enabled(True)
+
+        print("[eTrim] Manual backdrop image chosen:")
+        print("    path:", file_path)
+
+        return True
+
+    def toggle_backdrop_source_mode(self):
+        """
+        Toggle backdrop source mode.
+
+        Button unchecked:
+            Shader
+
+        Button checked:
+            File
+        """
+
+        use_file = self.backdrop_source_mode_btn.isChecked()
+
+        if use_file:
+            self.backdrop_source_mode_btn.setText("File")
+
+            if not self.viewer.backdrop_file_image_path:
+                result = self.choose_backdrop_image_file()
+
+                if not result:
+                    self.backdrop_source_mode_btn.setChecked(False)
+                    self.backdrop_source_mode_btn.setText("Shader")
+                    self.viewer.set_backdrop_source_mode(
+                        "shader"
+                    )
+                    return
+
+                return
+
+            result = self.viewer.set_backdrop_source_mode(
+                "file"
+            )
+
+            if result:
+                self.backdrop_image_btn.setChecked(True)
+                self.viewer.set_backdrop_enabled(True)
+
+            return
+
+        self.backdrop_source_mode_btn.setText("Shader")
+
+        if not self.viewer.backdrop_shader_image_path:
+            self.try_load_backdrop_image_from_cache(
+                self.viewer.uv_cache
+            )
+
+        result = self.viewer.set_backdrop_source_mode(
+            "shader"
+        )
+
+        if result:
+            self.backdrop_image_btn.setChecked(True)
             self.viewer.set_backdrop_enabled(True)
         else:
+            self.backdrop_image_btn.setChecked(False)
             self.viewer.set_backdrop_enabled(False)
 
+    def try_load_backdrop_image_from_cache(self, uv_cache):
+        """
+        Try to find and store base color texture from the loaded UV cache.
+
+        Important:
+            This updates shader backdrop source only.
+            If the user selected file mode, this does not override the file.
+        """
+
+        texture_path = ET_texture_finder.find_base_color_texture_from_uv_cache(
+            uv_cache
+        )
+
+        if not texture_path:
+            print("[eTrim] No base color texture found for backdrop.")
+
+            if self.viewer.get_backdrop_source_mode() == "shader":
+                self.backdrop_image_btn.setChecked(False)
+                self.viewer.set_backdrop_enabled(False)
+
+            return False
+
+        result = self.viewer.set_shader_backdrop_image_path(
+            texture_path
+        )
+
+        if result and self.viewer.get_backdrop_source_mode() == "shader":
+            self.backdrop_image_btn.setChecked(True)
+            self.viewer.set_backdrop_enabled(True)
+            self.viewer.set_backdrop_opacity_percent(100)
+
+        return result
 
     def set_backdrop_opacity(self, value):
         self.viewer.set_backdrop_opacity_percent(value)
@@ -469,6 +634,15 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
             self.enable_box_selection_btn.setText("Box Sel: OFF")
 
         self.sync_uv_mode_buttons()
+        
+        backdrop_source_mode = self.viewer.get_backdrop_source_mode()
+
+        if backdrop_source_mode == "file":
+            self.backdrop_source_mode_btn.setChecked(True)
+            self.backdrop_source_mode_btn.setText("File")
+        else:
+            self.backdrop_source_mode_btn.setChecked(False)
+            self.backdrop_source_mode_btn.setText("Shader")
 
     def save_layout_file(self):
         file_path, selected_filter = QtWidgets.QFileDialog.getSaveFileName(

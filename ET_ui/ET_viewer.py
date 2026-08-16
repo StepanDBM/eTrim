@@ -66,8 +66,12 @@ class ETrimViewer(QtWidgets.QWidget):
 
         self.backdrop_image_enabled = False
         self.backdrop_image_path = None
+        self.backdrop_shader_image_path = None
+        self.backdrop_file_image_path = None
+        self.backdrop_source_mode = "shader"
         self.backdrop_image = QtGui.QImage()
         self.backdrop_opacity = 1.0
+
 
         self.is_rect_selecting = False
         self.rect_select_start = None
@@ -163,9 +167,10 @@ class ETrimViewer(QtWidgets.QWidget):
 
         self.update()
 
-    def set_backdrop_image_path(self, image_path):
+    def load_backdrop_image_path(self, image_path):
         """
-        Set viewer backdrop image from file path.
+        Low-level backdrop image loader.
+        Does not decide whether image came from shader or file.
         """
 
         if not image_path:
@@ -191,10 +196,81 @@ class ETrimViewer(QtWidgets.QWidget):
         self.update()
 
         print("[eTrim] Backdrop image loaded:")
+        print("    source:", self.backdrop_source_mode)
         print("    path:", image_path)
 
         return True
 
+    def set_backdrop_image_path(self, image_path):
+        """
+        Backward-compatible setter.
+
+        Existing calls are treated as shader texture assignments.
+        """
+
+        return self.set_shader_backdrop_image_path(
+            image_path
+        )
+
+    def set_shader_backdrop_image_path(self, image_path):
+        """
+        Store shader/base-color backdrop path.
+
+        If current source mode is shader, load it immediately.
+        If current source mode is file, do not override the chosen file.
+        """
+
+        self.backdrop_shader_image_path = image_path
+
+        if self.backdrop_source_mode != "shader":
+            return True
+
+        return self.load_backdrop_image_path(
+            image_path
+        )
+
+    def set_file_backdrop_image_path(self, image_path):
+        """
+        Store manual file backdrop path and switch to file mode.
+
+        Manual file always overrides shader display.
+        """
+
+        self.backdrop_file_image_path = image_path
+        self.backdrop_source_mode = "file"
+
+        return self.load_backdrop_image_path(
+            image_path
+        )
+
+    def set_backdrop_source_mode(self, mode):
+        """
+        Switch backdrop source.
+
+        mode:
+            "shader"
+            "file"
+        """
+
+        if mode not in (
+            "shader",
+            "file"
+        ):
+            return False
+
+        self.backdrop_source_mode = mode
+
+        if mode == "shader":
+            return self.load_backdrop_image_path(
+                self.backdrop_shader_image_path
+            )
+
+        return self.load_backdrop_image_path(
+            self.backdrop_file_image_path
+        )
+
+    def get_backdrop_source_mode(self):
+        return self.backdrop_source_mode
 
     def set_backdrop_enabled(self, enabled):
         self.backdrop_image_enabled = bool(enabled)
