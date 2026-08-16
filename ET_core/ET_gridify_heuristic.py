@@ -571,13 +571,17 @@ class EGridifyHeuristicSession(object):
     Temporary heuristic mode:
 
         - no variants
-        - no candidate grading
-        - no accept/reject
+        - no candidate accept/reject
         - no restore-best loop
 
-    It simply applies the current gridify operation N times in sequence,
+    It applies the current gridify operation N times in sequence,
     refreshes the viewport after each pass, and updates the viewer overlay.
+
+    Every pass is counted, even if the gridify function returns False.
+    Pass status is based on actual UV movement.
     """
+
+    MOVEMENT_EPSILON = 0.00000001
 
     def __init__(
         self,
@@ -613,7 +617,83 @@ class EGridifyHeuristicSession(object):
 
         self.best_grade = None
 
+    def get_uv_position(self, mesh_data, uv_id):
+        if (
+            hasattr(mesh_data, "preview_uv_positions") and
+            uv_id in mesh_data.preview_uv_positions
+        ):
+            return mesh_data.preview_uv_positions[uv_id]
+
+        return mesh_data.uv_positions[uv_id]
+
+    def capture_current_positions(self):
+        positions = {}
+
+        for mesh_data, uv_id in self.uv_pairs:
+            key = (
+                id(mesh_data),
+                uv_id
+            )
+
+            positions[key] = self.get_uv_position(
+                mesh_data,
+                uv_id
+            )
+
+        return positions
+
+    def compute_snapshot_delta(self, before_positions):
+        max_distance = 0.0
+        total_distance = 0.0
+        count = 0
+
+        for mesh_data, uv_id in self.uv_pairs:
+            key = (
+                id(mesh_data),
+                uv_id
+            )
+
+            if key not in before_positions:
+                continue
+
+            before_u, before_v = before_positions[key]
+
+            after_u, after_v = self.get_uv_position(
+                mesh_data,
+                uv_id
+            )
+
+            du = float(after_u) - float(before_u)
+            dv = float(after_v) - float(before_v)
+
+            distance = math.sqrt(
+                du * du + dv * dv
+            )
+
+            max_distance = max(
+                max_distance,
+                distance
+            )
+
+            total_distance += distance
+            count += 1
+
+        if count <= 0:
+            return 0.0, 0.0
+
+        average_distance = total_distance / float(count)
+
+        return max_distance, average_distance
+
     def call_gridify_once(self):
+        """
+        Call the provided gridify function once.
+
+        Some callers pass a lambda that expects a variant dict.
+        Some older callers may pass a no-argument function.
+        Support both.
+        """
+
         variant = {
             "angle_offset_degrees": 0.0,
             "u_tolerance_multiplier": 1.0,
@@ -686,6 +766,15 @@ class EGridifyHeuristicSession(object):
                 message=message
             )
 
+    def is_cancel_requested(self):
+        if not self.viewer:
+            return False
+
+        if hasattr(self.viewer, "is_gridify_cancel_requested"):
+            return self.viewer.is_gridify_cancel_requested()
+
+        return False
+
     def compute_current_grade(self, uv_cache):
         grade = self.grade_calculator.compute_grade(
             uv_cache,
@@ -730,54 +819,125 @@ class EGridifyHeuristicSession(object):
 
         self.begin_overlay()
 
-        if baseline_grade:
-            self.update_overlay(
-                iteration=0,
-                status="info",
-                grade=baseline_grade.total,
-                message="baseline"
-            )
+        if hasattr(self.viewer, "clear_gridify_cancel"):
+            self.viewer.clear_gridify_cancel()
+
+        self.update_overlay(
+            iteration=0,
+            status="info",
+            grade=baseline_grade.total,
+            message="baseline"
+        )
 
         changed = False
+        consecutive_failed_passes = 0
+        max_consecutive_failed_passes = 10
 
         self.refresh_viewer()
 
         for iteration in range(self.iterations):
             pass_index = iteration + 1
 
-            result = self.call_gridify_once()
-
-            if result:
-                changed = True
-
-                grade = self.compute_current_grade(
-                    uv_cache
-                )
-
-                self.update_overlay(
-                    iteration=pass_index,
-                    status="correct",
-                    grade=grade.total,
-                    message="applied"
-                )
-
-                self.refresh_viewer()
-
-                print("[eTrim] Iterative gridify pass complete:")
-                print("        iteration:", pass_index)
-                print("        grade:", grade)
-
-            else:
+            if self.is_cancel_requested():
                 self.update_overlay(
                     iteration=pass_index,
                     status="failed",
                     grade=None,
-                    message="no change"
+                    message="cancelled"
                 )
 
                 self.refresh_viewer()
 
-                print("[eTrim] Iterative gridify pass produced no change:")
+                print("[eTrim] Iterative gridify cancelled by ESC.")
+                print("        iteration:", pass_index)
+
+                break
+
+            before_positions = self.capture_current_positions()
+
+            returned_result = self.call_gridify_once()
+
+            grade = self.compute_current_grade(
+                uv_cache
+            )
+
+            max_delta, average_delta = self.compute_snapshot_delta(
+                before_positions
+            )
+
+            moved = max_delta > self.MOVEMENT_EPSILON
+
+            if moved:
+                changed = True
+                consecutive_failed_passes = 0
+
+                status = "correct"
+
+                message = "moved max={:.8f} avg={:.8f}".format(
+                    max_delta,
+                    average_delta
+                )
+
+            else:
+                consecutive_failed_passes += 1
+
+                status = "failed"
+
+                message = "no movement"
+
+                # Keep returned_result visible in console debugging,
+                # but do not rely on it for overlay iteration counting.
+                if returned_result:
+                    message = "returned true, no movement"
+
+            self.update_overlay(
+                iteration=pass_index,
+                status=status,
+                grade=grade.total,
+                message=message
+            )
+
+            self.refresh_viewer()
+
+            if moved:
+                print("[eTrim] Iterative gridify pass complete:")
+            else:
+                print("[eTrim] Iterative gridify pass produced no movement:")
+
+            print("        iteration:", pass_index)
+            print("        returned:", returned_result)
+            print("        max delta:", max_delta)
+            print("        avg delta:", average_delta)
+            print("        grade:", grade)
+
+            if self.is_cancel_requested():
+                self.update_overlay(
+                    iteration=pass_index,
+                    status="failed",
+                    grade=grade.total,
+                    message="cancelled after pass"
+                )
+
+                self.refresh_viewer()
+
+                print("[eTrim] Iterative gridify cancelled by ESC after pass.")
+                print("        iteration:", pass_index)
+
+                break
+            if consecutive_failed_passes >= max_consecutive_failed_passes:
+                stop_message = "stopped: 10 failed passes in a row"
+
+                self.update_overlay(
+                    iteration=pass_index,
+                    status="failed",
+                    grade=grade.total,
+                    message=stop_message
+                )
+
+                self.refresh_viewer()
+
+                print("[eTrim] Iterative gridify stopped.")
+                print("        reason:", stop_message)
                 print("        iteration:", pass_index)
 
                 break
@@ -785,13 +945,17 @@ class EGridifyHeuristicSession(object):
         if changed:
             self.refresh_viewer()
 
-        if changed:
+        if self.is_cancel_requested():
+            self.finish_overlay(
+                message="Cancelled"
+            )
+        elif changed:
             self.finish_overlay(
                 message="Complete"
             )
         else:
             self.finish_overlay(
-                message="No changes"
+                message="No movement"
             )
 
         print("[eTrim] Iterative gridify complete.")

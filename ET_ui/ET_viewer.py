@@ -96,6 +96,8 @@ class ETrimViewer(QtWidgets.QWidget):
         self.gridify_overlay_rows = []
 
         self.gridify_overlay_close_rect = QtCore.QRectF()
+        self.gridify_cancel_requested = False
+
 
     # -----------------------------------------------------
     # Data
@@ -926,12 +928,22 @@ class ETrimViewer(QtWidgets.QWidget):
     # -----------------------------------------------------
 
     def begin_gridify_overlay(self, title="Gridify", total_iterations=0):
+        self.gridify_cancel_requested = False
         self.gridify_overlay_enabled = True
         self.gridify_overlay_title = str(title)
         self.gridify_overlay_iteration = 0
         self.gridify_overlay_total_iterations = int(total_iterations or 0)
         self.gridify_overlay_rows = []
         self.update()
+
+    def keyPressEvent(self, event):
+        if event.key() == QtCore.Qt.Key_Escape:
+            if self.gridify_overlay_enabled:
+                self.request_gridify_cancel()
+                event.accept()
+                return
+
+        super(ETrimViewer, self).keyPressEvent(event)
 
     def update_gridify_overlay(
         self,
@@ -1197,6 +1209,27 @@ class ETrimViewer(QtWidgets.QWidget):
 
         painter.restore()
 
+    def request_gridify_cancel(self):
+        self.gridify_cancel_requested = True
+
+        if hasattr(self, "update_gridify_overlay"):
+            self.update_gridify_overlay(
+                iteration=self.gridify_overlay_iteration,
+                total_iterations=self.gridify_overlay_total_iterations,
+                status="failed",
+                grade=None,
+                message="ESC cancel requested"
+            )
+
+        self.update()
+
+    def clear_gridify_cancel(self):
+        self.gridify_cancel_requested = False
+
+    def is_gridify_cancel_requested(self):
+        return bool(
+            self.gridify_cancel_requested
+        )
 
     def is_gridify_overlay_close_under_mouse(self, pos):
         if not self.gridify_overlay_enabled:
@@ -1205,9 +1238,7 @@ class ETrimViewer(QtWidgets.QWidget):
         if self.gridify_overlay_close_rect.isNull():
             return False
 
-        return self.gridify_overlay_close_rect.contains(
-            QtCore.QPointF(pos)
-        )
+        return self.gridify_overlay_close_rect.contains(QtCore.QPointF(pos))
     # -----------------------------------------------------
     # Paint
     # -----------------------------------------------------
