@@ -85,6 +85,18 @@ class ETrimViewer(QtWidgets.QWidget):
         self.rect_select_fill = QtGui.QColor(255, 220, 80, 35)
         self.rect_select_outline = QtGui.QColor(255, 220, 80, 220)
 
+        # -----------------------------------------------------
+        # Gridify iteration overlay
+        # -----------------------------------------------------
+
+        self.gridify_overlay_enabled = False
+        self.gridify_overlay_title = "Gridify"
+        self.gridify_overlay_iteration = 0
+        self.gridify_overlay_total_iterations = 0
+        self.gridify_overlay_rows = []
+
+        self.gridify_overlay_close_rect = QtCore.QRectF()
+
     # -----------------------------------------------------
     # Data
     # -----------------------------------------------------
@@ -686,6 +698,10 @@ class ETrimViewer(QtWidgets.QWidget):
     def mouseMoveEvent(self, event):
         pos = event.pos()
 
+        if self.is_gridify_overlay_close_under_mouse(pos):
+            self.setCursor(QtCore.Qt.PointingHandCursor)
+            return
+
         if self.is_pending_rect_select:
             if self.should_start_rect_selection(pos):
                 start_pos = self.pending_rect_select_start
@@ -755,6 +771,12 @@ class ETrimViewer(QtWidgets.QWidget):
 
     def mousePressEvent(self, event):
         pos = event.pos()
+
+        if event.button() == QtCore.Qt.LeftButton:
+            if self.is_gridify_overlay_close_under_mouse(pos):
+                self.clear_gridify_overlay()
+                event.accept()
+                return
 
         if event.button() == QtCore.Qt.MiddleButton:
             self.is_panning = True
@@ -900,6 +922,293 @@ class ETrimViewer(QtWidgets.QWidget):
         self.update()
 
     # -----------------------------------------------------
+    # Gridify overlay
+    # -----------------------------------------------------
+
+    def begin_gridify_overlay(self, title="Gridify", total_iterations=0):
+        self.gridify_overlay_enabled = True
+        self.gridify_overlay_title = str(title)
+        self.gridify_overlay_iteration = 0
+        self.gridify_overlay_total_iterations = int(total_iterations or 0)
+        self.gridify_overlay_rows = []
+        self.update()
+
+    def update_gridify_overlay(
+        self,
+        iteration,
+        total_iterations,
+        status,
+        grade=None,
+        message=None
+    ):
+        self.gridify_overlay_enabled = True
+        self.gridify_overlay_iteration = int(iteration or 0)
+        self.gridify_overlay_total_iterations = int(total_iterations or 0)
+
+        row = {
+            "iteration": int(iteration or 0),
+            "status": str(status or ""),
+            "grade": grade,
+            "message": str(message or "")
+        }
+
+        self.gridify_overlay_rows.append(row)
+
+        max_rows = 10
+
+        if len(self.gridify_overlay_rows) > max_rows:
+            self.gridify_overlay_rows = self.gridify_overlay_rows[-max_rows:]
+
+        self.update()
+
+    def finish_gridify_overlay(self, message="Complete"):
+        if message:
+            self.gridify_overlay_rows.append(
+                {
+                    "iteration": self.gridify_overlay_iteration,
+                    "status": "info",
+                    "grade": None,
+                    "message": str(message)
+                }
+            )
+
+        self.update()
+
+    def clear_gridify_overlay(self):
+        self.gridify_overlay_enabled = False
+        self.gridify_overlay_iteration = 0
+        self.gridify_overlay_total_iterations = 0
+        self.gridify_overlay_rows = []
+        self.update()
+
+    def draw_gridify_overlay(self, painter):
+        if not self.gridify_overlay_enabled:
+            return
+
+        painter.save()
+
+        margin = 14
+        width = 360
+        row_height = 18
+        header_height = 42
+
+        row_count = max(
+            1,
+            len(self.gridify_overlay_rows)
+        )
+
+        height = header_height + row_count * row_height + 14
+
+        rect = QtCore.QRectF(
+            margin,
+            margin,
+            width,
+            height
+        )
+
+        background = QtGui.QColor(
+            0,
+            0,
+            0,
+            165
+        )
+
+        border = QtGui.QColor(
+            255,
+            255,
+            255,
+            210
+        )
+
+        painter.setBrush(
+            QtGui.QBrush(background)
+        )
+
+        painter.setPen(
+            QtGui.QPen(border, 1)
+        )
+
+        painter.drawRoundedRect(
+            rect,
+            6,
+            6
+        )
+
+        title_pen = QtGui.QPen(
+            QtGui.QColor(255, 255, 255),
+            1
+        )
+
+        painter.setPen(title_pen)
+
+        font = painter.font()
+        font.setBold(True)
+        font.setPointSize(9)
+        painter.setFont(font)
+
+        title = "{}  {}/{}".format(
+            self.gridify_overlay_title,
+            self.gridify_overlay_iteration,
+            self.gridify_overlay_total_iterations
+        )
+
+        painter.drawText(
+            margin + 12,
+            margin + 18,
+            title
+        )
+
+        # Close button.
+        close_size = 18
+
+        self.gridify_overlay_close_rect = QtCore.QRectF(
+            rect.right() - close_size - 8,
+            rect.top() + 8,
+            close_size,
+            close_size
+        )
+
+        painter.setBrush(
+            QtGui.QBrush(QtGui.QColor(255, 255, 255, 35))
+        )
+
+        painter.setPen(
+            QtGui.QPen(QtGui.QColor(255, 255, 255, 220), 1)
+        )
+
+        painter.drawRoundedRect(
+            self.gridify_overlay_close_rect,
+            3,
+            3
+        )
+
+        close_font = painter.font()
+        close_font.setBold(True)
+        close_font.setPointSize(9)
+        painter.setFont(close_font)
+
+        painter.setPen(
+            QtGui.QPen(QtGui.QColor(255, 255, 255), 1)
+        )
+
+        painter.drawText(
+            self.gridify_overlay_close_rect,
+            QtCore.Qt.AlignCenter,
+            "x"
+        )
+
+        font.setBold(False)
+        font.setPointSize(8)
+        painter.setFont(font)
+
+        font.setBold(False)
+        font.setPointSize(8)
+        painter.setFont(font)
+
+        painter.setPen(
+            QtGui.QPen(QtGui.QColor(220, 220, 220), 1)
+        )
+
+        painter.drawText(
+            margin + 12,
+            margin + 36,
+            "Iteration status"
+        )
+
+        y = margin + header_height + 8
+
+        for row in self.gridify_overlay_rows:
+            status = row.get(
+                "status",
+                ""
+            )
+
+            iteration = row.get(
+                "iteration",
+                0
+            )
+
+            grade = row.get(
+                "grade",
+                None
+            )
+
+            message = row.get(
+                "message",
+                ""
+            )
+
+            if status == "correct":
+                color = QtGui.QColor(
+                    80,
+                    255,
+                    120
+                )
+                status_label = "correct"
+
+            elif status == "failed":
+                color = QtGui.QColor(
+                    255,
+                    80,
+                    80
+                )
+                status_label = "failed"
+
+            else:
+                color = QtGui.QColor(
+                    220,
+                    220,
+                    220
+                )
+                status_label = status or "info"
+
+            painter.setPen(
+                QtGui.QPen(color, 1)
+            )
+
+            if grade is None:
+                grade_text = "-"
+            else:
+                try:
+                    grade_text = "{:.6f}".format(
+                        float(grade)
+                    )
+                except Exception:
+                    grade_text = str(grade)
+
+            text = "#{:03d}  {}  grade: {}".format(
+                int(iteration),
+                status_label,
+                grade_text
+            )
+
+            if message:
+                text += "  {}".format(
+                    message
+                )
+
+            painter.drawText(
+                margin + 12,
+                y,
+                text
+            )
+
+            y += row_height
+
+        painter.restore()
+
+
+    def is_gridify_overlay_close_under_mouse(self, pos):
+        if not self.gridify_overlay_enabled:
+            return False
+
+        if self.gridify_overlay_close_rect.isNull():
+            return False
+
+        return self.gridify_overlay_close_rect.contains(
+            QtCore.QPointF(pos)
+        )
+    # -----------------------------------------------------
     # Paint
     # -----------------------------------------------------
 
@@ -924,6 +1233,7 @@ class ETrimViewer(QtWidgets.QWidget):
             )
 
         self.draw_rect_selection(painter)
+        self.draw_gridify_overlay(painter)
         self.draw_hud(painter)
 
         painter.end()

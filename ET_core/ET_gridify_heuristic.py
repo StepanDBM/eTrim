@@ -575,8 +575,8 @@ class EGridifyHeuristicSession(object):
         - no accept/reject
         - no restore-best loop
 
-    It simply applies the current gridify operation N times in sequence
-    and refreshes the viewport after each pass.
+    It simply applies the current gridify operation N times in sequence,
+    refreshes the viewport after each pass, and updates the viewer overlay.
     """
 
     def __init__(
@@ -601,7 +601,6 @@ class EGridifyHeuristicSession(object):
                 int(iterations)
             )
 
-        # Keep these attributes so external/debug code does not break.
         self.grade_calculator = EGridifyGradeCalculator()
 
         self.original_state = EUVStateSnapshot(
@@ -615,14 +614,6 @@ class EGridifyHeuristicSession(object):
         self.best_grade = None
 
     def call_gridify_once(self):
-        """
-        Call the provided gridify function once.
-
-        Some callers pass a lambda that expects a variant dict.
-        Some older callers may pass a no-argument function.
-        Support both.
-        """
-
         variant = {
             "angle_offset_degrees": 0.0,
             "u_tolerance_multiplier": 1.0,
@@ -639,20 +630,12 @@ class EGridifyHeuristicSession(object):
             return self.gridify_function()
 
     def refresh_viewer(self):
-        """
-        Force the UV viewer to visually update during iterative gridify.
-
-        This is intentionally defensive because the UI can be running under
-        different Qt bindings depending on Maya/Python version.
-        """
-
         if self.viewer:
             self.viewer.update()
 
             if hasattr(self.viewer, "repaint"):
                 self.viewer.repaint()
 
-        # Process Qt events if available.
         try:
             from PySide2 import QtWidgets
             QtWidgets.QApplication.processEvents()
@@ -663,7 +646,6 @@ class EGridifyHeuristicSession(object):
             except Exception:
                 pass
 
-        # Force Maya refresh if available.
         try:
             import maya.cmds as cmds
             cmds.refresh(
@@ -671,6 +653,47 @@ class EGridifyHeuristicSession(object):
             )
         except Exception:
             pass
+
+    def begin_overlay(self):
+        if not self.viewer:
+            return
+
+        if hasattr(self.viewer, "begin_gridify_overlay"):
+            self.viewer.begin_gridify_overlay(
+                title="Iterative Gridify",
+                total_iterations=self.iterations
+            )
+
+    def update_overlay(self, iteration, status, grade=None, message=None):
+        if not self.viewer:
+            return
+
+        if hasattr(self.viewer, "update_gridify_overlay"):
+            self.viewer.update_gridify_overlay(
+                iteration=iteration,
+                total_iterations=self.iterations,
+                status=status,
+                grade=grade,
+                message=message
+            )
+
+    def finish_overlay(self, message="Complete"):
+        if not self.viewer:
+            return
+
+        if hasattr(self.viewer, "finish_gridify_overlay"):
+            self.viewer.finish_gridify_overlay(
+                message=message
+            )
+
+    def compute_current_grade(self, uv_cache):
+        grade = self.grade_calculator.compute_grade(
+            uv_cache,
+            uv_pairs=self.uv_pairs,
+            affected_faces_by_mesh=self.affected_faces_by_mesh
+        )
+
+        return grade
 
     def run(self):
         if not self.viewer:
@@ -690,40 +713,88 @@ class EGridifyHeuristicSession(object):
             print("[eTrim] Iterative gridify skipped. No UV cache.")
             return False
 
+        self.grade_calculator.reference_median_density = None
+
+        self.grade_calculator.set_reference_uv_positions(
+            self.uv_pairs
+        )
+
+        baseline_grade = self.compute_current_grade(
+            uv_cache
+        )
+
         print("[eTrim] Iterative gridify started.")
         print("        iterations:", self.iterations)
         print("        uv pairs:", len(self.uv_pairs))
+        print("        baseline:", baseline_grade)
+
+        self.begin_overlay()
+
+        if baseline_grade:
+            self.update_overlay(
+                iteration=0,
+                status="info",
+                grade=baseline_grade.total,
+                message="baseline"
+            )
 
         changed = False
 
-        # Initial visual refresh so we see the starting state.
         self.refresh_viewer()
 
         for iteration in range(self.iterations):
+            pass_index = iteration + 1
+
             result = self.call_gridify_once()
 
             if result:
                 changed = True
 
-                # Important: update visual UVs after every pass.
+                grade = self.compute_current_grade(
+                    uv_cache
+                )
+
+                self.update_overlay(
+                    iteration=pass_index,
+                    status="correct",
+                    grade=grade.total,
+                    message="applied"
+                )
+
                 self.refresh_viewer()
 
                 print("[eTrim] Iterative gridify pass complete:")
-                print("        iteration:", iteration + 1)
+                print("        iteration:", pass_index)
+                print("        grade:", grade)
 
             else:
-                print("[eTrim] Iterative gridify pass produced no change:")
-                print("        iteration:", iteration + 1)
+                self.update_overlay(
+                    iteration=pass_index,
+                    status="failed",
+                    grade=None,
+                    message="no change"
+                )
 
-                # If one pass produces nothing, more identical passes will
-                # probably also produce nothing.
+                self.refresh_viewer()
+
+                print("[eTrim] Iterative gridify pass produced no change:")
+                print("        iteration:", pass_index)
+
                 break
 
         if changed:
             self.refresh_viewer()
 
+        if changed:
+            self.finish_overlay(
+                message="Complete"
+            )
+        else:
+            self.finish_overlay(
+                message="No changes"
+            )
+
         print("[eTrim] Iterative gridify complete.")
         print("        changed:", changed)
 
         return changed
-
