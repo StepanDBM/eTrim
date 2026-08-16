@@ -70,7 +70,7 @@ class ETrimViewer(QtWidgets.QWidget):
         self.backdrop_file_image_path = None
         self.backdrop_source_mode = "shader"
         self.backdrop_image = QtGui.QImage()
-        self.backdrop_opacity = 1.0
+        self.backdrop_opacity = 0.30
 
 
         self.is_rect_selecting = False

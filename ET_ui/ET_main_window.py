@@ -178,7 +178,7 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
 
         self.backdrop_opacity_spin = QtWidgets.QSpinBox()
         self.backdrop_opacity_spin.setRange(0, 100)
-        self.backdrop_opacity_spin.setValue(15)
+        self.backdrop_opacity_spin.setValue(30)
         self.backdrop_opacity_spin.setSuffix(" %")
         self.backdrop_opacity_spin.setMinimumWidth(72)
         self.backdrop_opacity_spin.setMinimumHeight(24)
@@ -634,7 +634,7 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
             self.enable_box_selection_btn.setText("Box Sel: OFF")
 
         self.sync_uv_mode_buttons()
-        
+
         backdrop_source_mode = self.viewer.get_backdrop_source_mode()
 
         if backdrop_source_mode == "file":
@@ -717,12 +717,13 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         if not box:
             print("[eTrim] Could not create box.")
             return
-
+        """
         print("[eTrim] Created box:")
         print("    id:", box.id)
         print("    name:", box.name)
         print("    uv:", box.u_min, box.v_min, box.u_max, box.v_max)
         print("    z:", box.z_index)
+        """
 
         self.viewer.select_drawable(
             self.viewer.box_drawer.drawable_key_for_box(box.id),

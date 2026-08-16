@@ -451,11 +451,12 @@ class EGridifyGradeCalculator(object):
                         grade.average_stretch_error = 999999.0
                         grade.max_stretch_error = 999999.0
                         grade.face_count = face_count
-
+                        """
                         print("[eTrim] Heuristic grade rejected collapsed interior quad:")
                         print("        mesh:", mesh_data.mesh_name)
                         print("        face:", face_index)
                         print("        depth:", depth)
+                        """
 
                         return grade
 
@@ -804,18 +805,15 @@ class EGridifyHeuristicSession(object):
 
         self.grade_calculator.reference_median_density = None
 
-        self.grade_calculator.set_reference_uv_positions(
-            self.uv_pairs
-        )
+        self.grade_calculator.set_reference_uv_positions(self.uv_pairs)
 
-        baseline_grade = self.compute_current_grade(
-            uv_cache
-        )
-
+        baseline_grade = self.compute_current_grade(uv_cache)
+        """"
         print("[eTrim] Iterative gridify started.")
         print("        iterations:", self.iterations)
         print("        uv pairs:", len(self.uv_pairs))
         print("        baseline:", baseline_grade)
+        """
 
         self.begin_overlay()
 
@@ -903,12 +901,13 @@ class EGridifyHeuristicSession(object):
                 print("[eTrim] Iterative gridify pass complete:")
             else:
                 print("[eTrim] Iterative gridify pass produced no movement:")
-
+            """
             print("        iteration:", pass_index)
             print("        returned:", returned_result)
             print("        max delta:", max_delta)
             print("        avg delta:", average_delta)
             print("        grade:", grade)
+            """
 
             if self.is_cancel_requested():
                 self.update_overlay(

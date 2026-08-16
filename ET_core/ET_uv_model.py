@@ -792,7 +792,242 @@ def apply_preview_to_maya(uv_cache):
 
             cached_face_map = {}
 
-      
+            for local_face_index, polygon_id in enumerate(mesh_data.face_polygon_ids):
+                if local_face_index >= len(mesh_data.faces):
+                    continue
+
+                cached_face_map[polygon_id] = mesh_data.faces[local_face_index]
+
+            # -------------------------------------------------
+            # Build complete assignment table for all polygons.
+            #
+            # Cached faces use preview topology.
+            # Uncached faces keep existing Maya assignments.
+            # -------------------------------------------------
+
+            uv_counts = []
+            uv_ids = []
+
+            for polygon_id in range(polygon_count):
+                vertex_count = mesh_fn.polygonVertexCount(
+                    polygon_id
+                )
+
+                uv_counts.append(
+                    vertex_count
+                )
+
+                if polygon_id in cached_face_map:
+                    preview_face_uv_ids = cached_face_map[polygon_id]
+
+                    for preview_uv_id in preview_face_uv_ids:
+                        maya_uv_id = preview_to_maya_uv_id.get(
+                            preview_uv_id
+                        )
+
+                        if maya_uv_id is None:
+                            maya_uv_id = mesh_data.preview_uv_original_ids.get(
+                                preview_uv_id,
+                                preview_uv_id
+                            )
+
+                        uv_ids.append(
+                            int(maya_uv_id)
+                        )
+
+                else:
+                    existing_uv_ids = existing_polygon_uv_ids.get(
+                        polygon_id,
+                        []
+                    )
+
+                    if len(existing_uv_ids) == vertex_count:
+                        for maya_uv_id in existing_uv_ids:
+                            uv_ids.append(
+                                int(maya_uv_id)
+                            )
+                    else:
+                        for local_vertex_id in range(vertex_count):
+                            maya_uv_id = get_polygon_uv_id(
+                                mesh_fn,
+                                polygon_id,
+                                local_vertex_id,
+                                uv_set
+                            )
+
+                            uv_ids.append(
+                                int(maya_uv_id)
+                            )
+
+            # -------------------------------------------------
+            # Apply UV assignments.
+            #
+            # Do NOT call clearUVs().
+            # clearUVs() can destroy the UV set in this workflow.
+            # -------------------------------------------------
+
+            mesh_fn.assignUVs(
+                om.MIntArray(uv_counts),
+                om.MIntArray(uv_ids),
+                uv_set
+            )
+
+            mesh_fn.updateSurface()
+
+            # -------------------------------------------------
+            # Verify cached face assignments.
+            # -------------------------------------------------
+
+            verified_changed_count = 0
+            verified_cached_count = 0
+
+            for polygon_id, preview_face_uv_ids in cached_face_map.items():
+                verified_cached_count += 1
+
+                expected_ids = []
+
+                for preview_uv_id in preview_face_uv_ids:
+                    expected_ids.append(
+                        int(
+                            preview_to_maya_uv_id.get(
+                                preview_uv_id,
+                                preview_uv_id
+                            )
+                        )
+                    )
+
+                actual_ids = []
+
+                vertex_count = mesh_fn.polygonVertexCount(
+                    polygon_id
+                )
+
+                for local_vertex_id in range(vertex_count):
+                    actual_uv_id = get_polygon_uv_id(
+                        mesh_fn,
+                        polygon_id,
+                        local_vertex_id,
+                        uv_set
+                    )
+
+                    actual_ids.append(
+                        int(actual_uv_id)
+                    )
+
+                if actual_ids == expected_ids:
+                    verified_changed_count += 1
+                else:
+                    """
+                    print("[eTrim] UV assignment verification mismatch:")
+                    print("        mesh:", mesh_data.mesh_name)
+                    print("        polygon:", polygon_id)
+                    print("        expected:", expected_ids)
+                    print("        actual:", actual_ids)
+                    """
+
+            # -------------------------------------------------
+            # Update preview cache to actual Maya UV ids.
+            #
+            # This prevents repeated Apply from appending the same generated
+            # preview UVs again and again.
+            # -------------------------------------------------
+
+            remapped_preview_positions = {}
+            remapped_preview_original_ids = {}
+            remapped_faces = []
+
+            for preview_uv_id, uv_position in mesh_data.preview_uv_positions.items():
+                maya_uv_id = preview_to_maya_uv_id.get(
+                    preview_uv_id,
+                    preview_uv_id
+                )
+
+                remapped_preview_positions[maya_uv_id] = uv_position
+                remapped_preview_original_ids[maya_uv_id] = maya_uv_id
+
+            for face_uv_ids in mesh_data.faces:
+                remapped_face_uv_ids = []
+
+                for preview_uv_id in face_uv_ids:
+                    maya_uv_id = preview_to_maya_uv_id.get(
+                        preview_uv_id,
+                        preview_uv_id
+                    )
+
+                    remapped_face_uv_ids.append(
+                        maya_uv_id
+                    )
+
+                remapped_faces.append(
+                    remapped_face_uv_ids
+                )
+
+            mesh_data.preview_uv_positions = remapped_preview_positions
+            mesh_data.preview_uv_original_ids = remapped_preview_original_ids
+            mesh_data.uv_positions = dict(
+                remapped_preview_positions
+            )
+            mesh_data.faces = remapped_faces
+
+            if mesh_data.preview_uv_positions:
+                mesh_data.next_preview_uv_id = max(
+                    mesh_data.preview_uv_positions.keys()
+                ) + 1
+            else:
+                mesh_data.next_preview_uv_id = 0
+
+            rebuild_preview_topology(
+                mesh_data
+            )
+
+            # -------------------------------------------------
+            # Force Maya to refresh.
+            # -------------------------------------------------
+
+            try:
+                cmds.dgdirty(
+                    mesh_data.mesh_name
+                )
+            except Exception:
+                pass
+
+            try:
+                shell_count = cmds.polyEvaluate(
+                    mesh_data.mesh_name,
+                    uvShell=True
+                )
+            except Exception:
+                shell_count = None
+            """
+            print("[eTrim] Applied preview UVs to mesh:")
+            print("        mesh:", mesh_data.mesh_name)
+            print("        original preview UVs:", original_preview_uv_count)
+            print("        generated preview UVs:", generated_preview_uv_count)
+            print("        total Maya UVs before:", original_maya_uv_count)
+            print("        total Maya UVs after:", len(new_u_values))
+            print("        verified cached faces:", verified_changed_count, "/", verified_cached_count)
+            print("        uv shell count:", shell_count)
+            """
+
+            applied_mesh_count += 1
+
+        print("[eTrim] Applied preview UVs to Maya.")
+        print("        meshes:", applied_mesh_count)
+
+        cmds.refresh(
+            force=True
+        )
+
+        return applied_mesh_count > 0
+
+    except Exception as exc:
+        cmds.warning("[eTrim] Failed to apply preview UVs to Maya.")
+        print("[eTrim] Failed to apply preview UVs to Maya:")
+        print(exc)
+        raise
+
+    finally:
+        cmds.undoInfo(closeChunk=True)
 
 def build_cache_from_selection():
     """

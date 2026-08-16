@@ -1431,13 +1431,14 @@ def compute_follow_active_quad_gridified_positions_for_mesh(
     if not final_positions:
         print("[eTrim] Gridify produced no topology-aware positions.")
         return {}
-
+    """
     print("[eTrim] Gridify mesh:")
     print("    mesh:", mesh_data.mesh_name)
     print("    uv count:", len(final_positions))
     print("    quad faces:", len(quad_face_indices))
     print("    solved quad faces:", solved_face_count)
     print("    components:", len(components))
+    """
 
     return final_positions
 
@@ -1516,40 +1517,24 @@ def gridify_viewer_selection_to_preview(viewer):
         print("[eTrim] Empty UV cache. Gridify skipped.")
         return False
 
-    split_selected_faces_if_needed(
-        viewer
-    )
+    split_selected_faces_if_needed(viewer)
 
-    uv_pairs = get_gridify_uv_pairs(
-        viewer
-    )
+    uv_pairs = get_gridify_uv_pairs(viewer)
 
     if not uv_pairs:
         print("[eTrim] No selected UVs found for gridify.")
         return False
 
-    grouped = group_uv_pairs_by_mesh(
-        uv_pairs
-    )
+    grouped = group_uv_pairs_by_mesh(uv_pairs)
 
     changed = False
 
     for mesh_data, uv_ids in grouped.items():
-        uv_ids = sorted(
-            set(
-                uv_ids
-            )
-        )
+        uv_ids = sorted(set(uv_ids))
 
-        positions = compute_gridified_positions_for_mesh(
-            mesh_data,
-            uv_ids
-        )
+        positions = compute_gridified_positions_for_mesh(mesh_data, uv_ids)
 
-        if apply_gridified_positions(
-            mesh_data,
-            positions
-        ):
+        if apply_gridified_positions(mesh_data, positions):
             changed = True
 
     if changed:
