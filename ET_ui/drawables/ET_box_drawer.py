@@ -761,6 +761,13 @@ class EBoxDrawer(EDrawableObjectController):
         unwrap_gridify_fit_action = menu.addAction("Native Unwrap + Gridify + Fit In Me")
         unwrap_gridify_fit_action.triggered.connect(lambda: self.native_unwrap_gridify_and_fit_in_box(box_id))
 
+
+        heuristic_gridify_fit_action = menu.addAction("Heuristic Gridify + Fit In Me")
+        heuristic_gridify_fit_action.triggered.connect(lambda: self.heuristic_gridify_and_fit_in_box(box_id))
+
+        unwrap_heuristic_gridify_fit_action = menu.addAction("Native Unwrap + Heuristic Gridify + Fit In Me")
+        unwrap_heuristic_gridify_fit_action.triggered.connect(lambda: self.native_unwrap_heuristic_gridify_and_fit_in_box(box_id))
+
         box = self.model().get_box(box_id)
         menu.addSeparator()
         fit_mode_menu = menu.addMenu("Fit Mode")
@@ -1099,6 +1106,71 @@ class EBoxDrawer(EDrawableObjectController):
         self.fit_selected_uvs_in_box(box_id)
 
         print("[eTrim] Native unwrap + gridify + fit complete:", box.name)
+
+    def heuristic_gridify_and_fit_in_box(self, box_id):
+        """
+        Run heuristic gridify on selected UVs, then fit the result into this box.
+
+        The heuristic grade happens before fit.
+        """
+
+        box = self.model().get_box(
+            box_id
+        )
+
+        if not box:
+            return
+
+        if not self.viewer:
+            return
+
+        if not self.viewer.uv_drawer:
+            return
+
+        result = self.viewer.uv_drawer.heuristic_gridify_selected_uvs()
+
+        if not result:
+            print("[eTrim] Heuristic gridify failed. Fit skipped.")
+            return
+
+        self.fit_selected_uvs_in_box(
+            box_id
+        )
+
+        print("[eTrim] Heuristic gridify + fit complete:", box.name)
+
+
+    def native_unwrap_heuristic_gridify_and_fit_in_box(self, box_id):
+        """
+        Native unwrap selected UVs, run heuristic gridify, then fit into this box.
+
+        The final fit happens after heuristic grading.
+        """
+
+        box = self.model().get_box(
+            box_id
+        )
+
+        if not box:
+            return
+
+        if not self.viewer:
+            return
+
+        if not self.viewer.uv_drawer:
+            return
+
+        result = self.viewer.uv_drawer.native_unwrap_and_heuristic_gridify_selected_uvs()
+
+        if not result:
+            print("[eTrim] Native unwrap + heuristic gridify failed. Fit skipped.")
+            return
+
+        self.fit_selected_uvs_in_box(
+            box_id
+        )
+
+        print("[eTrim] Native unwrap + heuristic gridify + fit complete:", box.name)
 
     def select_boxes_in_rect(self, rect, additive=False, subtractive=False):
         """

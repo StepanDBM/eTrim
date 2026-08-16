@@ -12,6 +12,7 @@ from ET_core import ET_uv_model
 from ET_core import ET_uv_unwrap
 from ET_core import ET_gridify
 from ET_core.ET_heatmap import EStretchHeatMapCalculator
+from ET_core.ET_gridify_heuristic import EGridifyHeuristicSession
 
 
 class EUVDrawer(EDrawableObjectController):
@@ -412,6 +413,116 @@ class EUVDrawer(EDrawableObjectController):
         return self.viewer.get_selected_drawables_by_type(
             self.KIND_VERTEX
         )
+
+    def get_heuristic_gridify_uv_pairs(self):
+        """
+        Resolve the current UV selection into UV pairs for heuristic gridify.
+
+        Important:
+            - Vertex mode uses selected vertices directly.
+            - Face mode follows existing face operation behavior and detaches
+            selected faces before gridifying.
+            - Shell mode uses selected shells directly.
+        """
+
+        if self.selection_mode == self.MODE_VERTEX:
+            return self.get_uv_pairs_from_selected_vertices()
+
+        if self.selection_mode == self.MODE_FACE:
+            selected_by_mesh = self.get_selected_face_indices_by_mesh()
+
+            if selected_by_mesh:
+                for mesh_data, face_indices in selected_by_mesh.items():
+                    ET_uv_model.split_faces_to_preview_shell(
+                        mesh_data,
+                        face_indices
+                    )
+
+                return self.get_uv_pairs_from_selected_faces()
+
+            return []
+
+        if self.selection_mode == self.MODE_SHELL:
+            return self.get_uv_pairs_from_selected_shells()
+
+        return []
+
+    def gridify_uv_pairs_to_preview(
+        self,
+        uv_pairs,
+        angle_offset_degrees=0.0,
+        u_tolerance_multiplier=1.0,
+        v_tolerance_multiplier=1.0,
+        swap_axes=False,
+        blend_factor=1.0
+    ):
+        """
+        Gridify only the provided UV pairs.
+
+        This is used by the heuristic session so each candidate mutates only the
+        controlled UV set and does not re-resolve selection every iteration.
+        """
+
+        if not uv_pairs:
+            return False
+
+        grouped = ET_gridify.group_uv_pairs_by_mesh(
+            uv_pairs
+        )
+
+        changed = False
+
+        for mesh_data, mesh_uv_ids in grouped.items():
+            mesh_uv_ids = sorted(
+                set(mesh_uv_ids)
+            )
+
+            positions = ET_gridify.compute_gridified_positions_for_mesh(
+                mesh_data,
+                mesh_uv_ids,
+                angle_offset_degrees=angle_offset_degrees,
+                u_tolerance_multiplier=u_tolerance_multiplier,
+                v_tolerance_multiplier=v_tolerance_multiplier,
+                swap_axes=swap_axes
+            )
+
+            blend_factor = max(
+                0.0,
+                min(
+                    1.0,
+                    float(blend_factor)
+                )
+            )
+
+            if blend_factor < 1.0:
+                blended_positions = {}
+
+                for uv_id, target_position in positions.items():
+                    current_position = self.get_uv_position(
+                        mesh_data,
+                        uv_id
+                    )
+
+                    current_u, current_v = current_position
+                    target_u, target_v = target_position
+
+                    blended_positions[uv_id] = (
+                        current_u + (target_u - current_u) * blend_factor,
+                        current_v + (target_v - current_v) * blend_factor
+                    )
+
+                positions = blended_positions
+            
+            if ET_gridify.apply_gridified_positions(
+                mesh_data,
+                positions
+            ):
+                changed = True
+
+        if changed:
+            self.viewer.update()
+
+        return changed
 
     def prepare_selected_vertices_for_preview_edit(self):
         """
@@ -2355,6 +2466,12 @@ class EUVDrawer(EDrawableObjectController):
         unwrap_gridify_action = menu.addAction("Native Unwrap + Gridify")
         unwrap_gridify_action.triggered.connect(self.native_unwrap_and_gridify_selected_uvs)
 
+        heuristic_gridify_action = menu.addAction("Heuristic Gridify")
+        heuristic_gridify_action.triggered.connect(self.heuristic_gridify_selected_uvs)
+
+        unwrap_heuristic_gridify_action = menu.addAction("Native Unwrap + Heuristic Gridify")
+        unwrap_heuristic_gridify_action.triggered.connect(self.native_unwrap_and_heuristic_gridify_selected_uvs)
+
         menu.addSeparator()
 
         heatmap_menu = menu.addMenu("Stretch Heatmap")
@@ -2481,6 +2598,69 @@ class EUVDrawer(EDrawableObjectController):
             print("[eTrim] Gridify selected UVs failed or did nothing.")
 
         self.viewer.update()
+
+    def heuristic_gridify_selected_uvs(self):
+        """
+        Run heuristic gridify on the current UV selection.
+
+        First version:
+            fixed iteration session using the current deterministic gridify
+            operation as candidate generator.
+        """
+
+        if not self.viewer:
+            return False
+
+        uv_pairs = self.get_heuristic_gridify_uv_pairs()
+
+        if not uv_pairs:
+            print("[eTrim] No selected UVs for heuristic gridify.")
+            return False
+
+        session = EGridifyHeuristicSession(
+            viewer=self.viewer,
+            uv_pairs=uv_pairs,
+            gridify_function=lambda variant: self.gridify_uv_pairs_to_preview(
+                uv_pairs,
+                angle_offset_degrees=variant.get("angle_offset_degrees", 0.0),
+                u_tolerance_multiplier=variant.get("u_tolerance_multiplier", 1.0),
+                v_tolerance_multiplier=variant.get("v_tolerance_multiplier", 1.0),
+                swap_axes=variant.get("swap_axes", False),
+                blend_factor=variant.get("blend_factor", 1.0)
+            ),
+            iterations=200
+        )
+
+        result = session.run()
+
+        if result:
+            print("[eTrim] Heuristic gridify selected UVs complete.")
+        else:
+            print("[eTrim] Heuristic gridify selected UVs failed or did nothing.")
+
+        self.viewer.update()
+        return result
+
+
+    def native_unwrap_and_heuristic_gridify_selected_uvs(self):
+        """
+        Native unwrap selected UVs, then run heuristic gridify.
+        """
+
+        if not self.viewer:
+            return False
+
+        unwrap_result = ET_uv_unwrap.unwrap_viewer_selection_to_preview(
+            self.viewer,
+            iterations=1,
+            pack=False
+        )
+
+        if not unwrap_result:
+            print("[eTrim] Native unwrap failed. Heuristic gridify skipped.")
+            return False
+
+        return self.heuristic_gridify_selected_uvs()
 
     def native_unwrap_and_gridify_selected_uvs(self):
         if not self.viewer:

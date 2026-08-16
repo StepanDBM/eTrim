@@ -22,8 +22,9 @@ class EStretchHeatMapCalculator(object):
 
     def __init__(self):
         self.metrics = {}
-        self.median_density = 0.0
         self.ratios = {}
+        self.densities = {}
+        self.median_density = 0.0
 
     # -----------------------------------------------------
     # Geometry helpers
@@ -161,6 +162,7 @@ class EStretchHeatMapCalculator(object):
 
         self.metrics = {}
         self.ratios = {}
+        self.densities = {}
         self.median_density = 0.0
 
 
@@ -227,6 +229,8 @@ class EStretchHeatMapCalculator(object):
                 )
 
                 if face_index >= len(world_areas):
+                    self.densities[key] = 0.0
+                    self.ratios[key] = 1.0
                     self.metrics[key] = 1.0
                     continue
 
@@ -242,17 +246,24 @@ class EStretchHeatMapCalculator(object):
                 )
 
                 if world_area <= self.EPSILON or uv_area <= self.EPSILON:
+                    self.densities[key] = 0.0
+                    self.ratios[key] = 999.0
                     self.metrics[key] = 999.0
                     continue
 
                 density = uv_area / world_area
-                ratio = density / median_density
 
+                self.densities[key] = density
+
+                ratio = density / median_density
                 self.ratios[key] = ratio
 
                 if ratio <= self.EPSILON:
                     stretch = 999.0
-                    self.ratios[key] = 1.0
+                    self.densities[key] = 0.0
+                    self.ratios[key] = 999.0
+                    self.metrics[key] = 999.0
+                    continue
                 else:
                     stretch = max(
                         ratio,
@@ -263,21 +274,39 @@ class EStretchHeatMapCalculator(object):
 
         return self.metrics
 
-    def get_face_density_ratio(self, mesh_data, face_index):
+    def get_face_density(self, mesh_data, face_index):
+        return self.densities.get(
+            (
+                id(mesh_data),
+                face_index
+            ),
+            0.0
+        )
+
+
+    def get_face_density_ratio(self, mesh_data, face_index, reference_median_density=None):
         """
-        Return signed density ratio for one face.
-        1.0:
-            neutral compared to median density
-        > 1.0:
-            UV face is larger than expected relative to world area
-        < 1.0:
-            UV face is smaller than expected relative to world area
+        Return signed density ratio.
+
+        If reference_median_density is provided, compare against that fixed baseline.
+        Otherwise use this calculator's current median_density.
         """
 
-        return self.ratios.get(
-            (id(mesh_data), face_index),
-            1.0
+        density = self.get_face_density(
+            mesh_data,
+            face_index
         )
+
+        if reference_median_density is None:
+            reference_median_density = self.median_density
+
+        if reference_median_density <= self.EPSILON:
+            return 1.0
+
+        if density <= self.EPSILON:
+            return 999.0
+
+        return density / reference_median_density
 
     def get_face_stretch(self, mesh_data, face_index):
         return self.metrics.get(

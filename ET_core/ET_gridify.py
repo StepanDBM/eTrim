@@ -1,9 +1,17 @@
 # ET_core/ET_gridify.py
 
 import math
+from collections import defaultdict, deque
 
 from ET_core import ET_uv_model
 
+
+EPSILON = 0.000000001
+
+
+# -----------------------------------------------------
+# Basic UV selection helpers
+# -----------------------------------------------------
 
 def unique_uv_pairs(uv_pairs):
     """
@@ -49,7 +57,9 @@ def get_uv_position(mesh_data, uv_id):
 
 def ensure_preview_positions(mesh_data):
     if not hasattr(mesh_data, "preview_uv_positions"):
-        mesh_data.preview_uv_positions = dict(mesh_data.uv_positions)
+        mesh_data.preview_uv_positions = dict(
+            mesh_data.uv_positions
+        )
 
 
 def get_selected_face_indices_by_mesh(viewer):
@@ -93,8 +103,7 @@ def split_selected_faces_if_needed(viewer):
     """
     If the user selected faces, split those faces into preview UVs first.
 
-    This prevents gridify from pulling the whole original shell when the user
-    only selected a few faces.
+    This prevents gridify from pulling unselected shell UVs.
     """
 
     selected_by_mesh = get_selected_face_indices_by_mesh(
@@ -111,6 +120,7 @@ def split_selected_faces_if_needed(viewer):
         )
 
     return True
+
 
 def get_gridify_uv_pairs(viewer):
     """
@@ -131,10 +141,6 @@ def get_gridify_uv_pairs(viewer):
 
     uv_drawer = viewer.uv_drawer
 
-    # -----------------------------------------------------
-    # Selected drawables
-    # -----------------------------------------------------
-
     for drawable_type in (
         "uv_vertex",
         "uv_face",
@@ -148,10 +154,6 @@ def get_gridify_uv_pairs(viewer):
             return unique_uv_pairs(
                 uv_pairs
             )
-
-    # -----------------------------------------------------
-    # Active drawable fallbacks
-    # -----------------------------------------------------
 
     active_vertex = getattr(
         uv_drawer,
@@ -195,10 +197,6 @@ def get_gridify_uv_pairs(viewer):
             )
         )
 
-    # -----------------------------------------------------
-    # Whole cache fallback
-    # -----------------------------------------------------
-
     uv_cache = getattr(
         viewer,
         "uv_cache",
@@ -211,7 +209,7 @@ def get_gridify_uv_pairs(viewer):
     uv_pairs = []
 
     for mesh_data in uv_cache.meshes:
-        uv_drawer.ensure_preview_positions(
+        ensure_preview_positions(
             mesh_data
         )
 
@@ -223,7 +221,10 @@ def get_gridify_uv_pairs(viewer):
                 )
             )
 
-    return unique_
+    return unique_uv_pairs(
+        uv_pairs
+    )
+
 
 def group_uv_pairs_by_mesh(uv_pairs):
     grouped = {}
@@ -239,15 +240,103 @@ def group_uv_pairs_by_mesh(uv_pairs):
     return grouped
 
 
+# -----------------------------------------------------
+# Math helpers
+# -----------------------------------------------------
+
+def vector_add(a, b):
+    return (
+        float(a[0]) + float(b[0]),
+        float(a[1]) + float(b[1])
+    )
+
+
+def vector_sub(a, b):
+    return (
+        float(a[0]) - float(b[0]),
+        float(a[1]) - float(b[1])
+    )
+
+
+def vector_mul(a, value):
+    return (
+        float(a[0]) * float(value),
+        float(a[1]) * float(value)
+    )
+
+
+def vector_length(a):
+    return math.sqrt(
+        float(a[0]) * float(a[0]) +
+        float(a[1]) * float(a[1])
+    )
+
+
+def vector_distance(a, b):
+    return vector_length(
+        vector_sub(
+            a,
+            b
+        )
+    )
+
+
+def vector_normalize(a):
+    length = vector_length(
+        a
+    )
+
+    if length <= EPSILON:
+        return (
+            0.0,
+            0.0
+        )
+
+    return (
+        float(a[0]) / length,
+        float(a[1]) / length
+    )
+
+
+def vector_dot(a, b):
+    return (
+        float(a[0]) * float(b[0]) +
+        float(a[1]) * float(b[1])
+    )
+
+
+def vector_perpendicular(a):
+    return (
+        -float(a[1]),
+        float(a[0])
+    )
+
+
+def vector_cross_2d(a, b):
+    return (
+        float(a[0]) * float(b[1]) -
+        float(a[1]) * float(b[0])
+    )
+
+
+def rotate_vector(vector, radians_value):
+    cos_value = math.cos(
+        radians_value
+    )
+
+    sin_value = math.sin(
+        radians_value
+    )
+
+    x, y = vector
+
+    return (
+        x * cos_value - y * sin_value,
+        x * sin_value + y * cos_value
+    )
+
+
 def compute_bounds(points):
-    """
-    points:
-        [(u, v), ...]
-
-    Returns:
-        u_min, v_min, u_max, v_max
-    """
-
     if not points:
         return 0.0, 0.0, 0.0, 0.0
 
@@ -269,316 +358,1117 @@ def compute_bounds(points):
     )
 
 
-def compute_pca_angle(points):
-    """
-    Compute principal direction angle from UV points.
-
-    This helps gridify islands that are somewhat rotated.
-    The output grid itself is still axis-aligned afterward.
-    """
-
-    if len(points) < 2:
+def get_polygon_area_from_positions(mesh_data, face_uv_ids):
+    if len(face_uv_ids) < 3:
         return 0.0
 
-    center_u = sum(
-        point[0]
-        for point in points
-    ) / float(len(points))
+    area = 0.0
+    count = len(face_uv_ids)
 
-    center_v = sum(
-        point[1]
-        for point in points
-    ) / float(len(points))
+    for index, uv_a in enumerate(face_uv_ids):
+        uv_b = face_uv_ids[
+            (
+                index + 1
+            ) % count
+        ]
 
-    xx = 0.0
-    xy = 0.0
-    yy = 0.0
+        pos_a = get_uv_position(
+            mesh_data,
+            uv_a
+        )
 
-    for u, v in points:
-        du = u - center_u
-        dv = v - center_v
+        pos_b = get_uv_position(
+            mesh_data,
+            uv_b
+        )
 
-        xx += du * du
-        xy += du * dv
-        yy += dv * dv
+        area += (
+            pos_a[0] * pos_b[1] -
+            pos_b[0] * pos_a[1]
+        )
 
-    if abs(xx - yy) < 0.0000001 and abs(xy) < 0.0000001:
+    return abs(area) * 0.5
+
+
+def signed_quad_area(points):
+    """
+    Signed area for four points in order.
+    """
+
+    if len(points) != 4:
         return 0.0
 
-    return 0.5 * math.atan2(
-        2.0 * xy,
-        xx - yy
-    )
+    area = 0.0
+
+    for index, point_a in enumerate(points):
+        point_b = points[
+            (
+                index + 1
+            ) % 4
+        ]
+
+        area += (
+            point_a[0] * point_b[1] -
+            point_b[0] * point_a[1]
+        )
+
+    return area * 0.5
 
 
-def rotate_point(u, v, center_u, center_v, radians):
-    cos_value = math.cos(radians)
-    sin_value = math.sin(radians)
+def nearest_axis_from_vector(vector):
+    """
+    Snap an orientation vector to the nearest UV editor axis.
 
-    local_u = u - center_u
-    local_v = v - center_v
+    Returns one of:
+        (1, 0), (-1, 0), (0, 1), (0, -1)
+    """
+
+    x, y = vector
+
+    if abs(x) >= abs(y):
+        if x >= 0.0:
+            return (
+                1.0,
+                0.0
+            )
+
+        return (
+            -1.0,
+            0.0
+        )
+
+    if y >= 0.0:
+        return (
+            0.0,
+            1.0
+        )
 
     return (
-        center_u + local_u * cos_value - local_v * sin_value,
-        center_v + local_u * sin_value + local_v * cos_value
+        0.0,
+        -1.0
     )
 
 
-def cluster_values(values, tolerance):
+# -----------------------------------------------------
+# Quad topology helpers
+# -----------------------------------------------------
+
+def get_complete_selected_face_indices(mesh_data, selected_uv_ids):
     """
-    Cluster sorted scalar values into row/column groups.
+    Return faces whose all UV ids are inside selected_uv_ids.
+    """
+
+    selected_uv_ids = set(
+        selected_uv_ids
+    )
+
+    result = []
+
+    for face_index, face_uv_ids in enumerate(mesh_data.faces):
+        if not face_uv_ids:
+            continue
+
+        complete = True
+
+        for uv_id in face_uv_ids:
+            if uv_id not in selected_uv_ids:
+                complete = False
+                break
+
+        if complete:
+            result.append(
+                face_index
+            )
+
+    return result
+
+
+def get_complete_selected_quad_indices(mesh_data, selected_uv_ids):
+    """
+    Return selected faces that are complete quads.
+    """
+
+    result = []
+
+    complete_faces = get_complete_selected_face_indices(
+        mesh_data,
+        selected_uv_ids
+    )
+
+    for face_index in complete_faces:
+        face_uv_ids = mesh_data.faces[face_index]
+
+        if len(face_uv_ids) == 4:
+            result.append(
+                face_index
+            )
+
+    return result
+
+
+def edge_key(uv_a, uv_b):
+    return tuple(
+        sorted(
+            (
+                uv_a,
+                uv_b
+            )
+        )
+    )
+
+
+def build_quad_adjacency(mesh_data, quad_face_indices):
+    """
+    Build adjacency between selected quad faces through shared UV edges.
 
     Returns:
-        centers, value_to_cluster_index
+        face_index -> [(neighbor_face_index, shared_uv_a, shared_uv_b), ...]
     """
 
-    if not values:
-        return [], {}
+    quad_face_set = set(
+        quad_face_indices
+    )
 
-    sorted_values = sorted(values)
+    edge_to_faces = defaultdict(list)
 
-    clusters = []
-    current_cluster = [
-        sorted_values[0]
-    ]
+    for face_index in quad_face_indices:
+        face_uv_ids = mesh_data.faces[face_index]
 
-    for value in sorted_values[1:]:
-        previous = current_cluster[-1]
+        if len(face_uv_ids) != 4:
+            continue
 
-        if abs(value - previous) <= tolerance:
-            current_cluster.append(value)
-        else:
-            clusters.append(current_cluster)
-            current_cluster = [
-                value
+        for index, uv_a in enumerate(face_uv_ids):
+            uv_b = face_uv_ids[
+                (
+                    index + 1
+                ) % 4
             ]
 
-    clusters.append(current_cluster)
+            key = edge_key(
+                uv_a,
+                uv_b
+            )
 
-    centers = [
-        sum(cluster) / float(len(cluster))
-        for cluster in clusters
+            edge_to_faces[key].append(
+                face_index
+            )
+
+    neighbors = defaultdict(list)
+
+    for key, face_indices in edge_to_faces.items():
+        if len(face_indices) != 2:
+            continue
+
+        face_a, face_b = face_indices
+        uv_a, uv_b = key
+
+        if face_a not in quad_face_set:
+            continue
+
+        if face_b not in quad_face_set:
+            continue
+
+        neighbors[face_a].append(
+            (
+                face_b,
+                uv_a,
+                uv_b
+            )
+        )
+
+        neighbors[face_b].append(
+            (
+                face_a,
+                uv_a,
+                uv_b
+            )
+        )
+
+    return neighbors
+
+
+def split_face_components(face_indices, neighbors):
+    """
+    Split selected quad faces into connected components.
+    """
+
+    remaining = set(
+        face_indices
+    )
+
+    components = []
+
+    while remaining:
+        start = next(
+            iter(
+                remaining
+            )
+        )
+
+        remaining.remove(
+            start
+        )
+
+        component = set(
+            [
+                start
+            ]
+        )
+
+        queue = deque(
+            [
+                start
+            ]
+        )
+
+        while queue:
+            face_index = queue.popleft()
+
+            for neighbor_face, uv_a, uv_b in neighbors.get(face_index, []):
+                if neighbor_face not in remaining:
+                    continue
+
+                remaining.remove(
+                    neighbor_face
+                )
+
+                component.add(
+                    neighbor_face
+                )
+
+                queue.append(
+                    neighbor_face
+                )
+
+        components.append(
+            component
+        )
+
+    return components
+
+
+def choose_root_quad(mesh_data, component_face_indices):
+    """
+    Pick a stable root quad.
+
+    Current rule:
+        largest UV area among quad faces.
+    """
+
+    best_face_index = None
+    best_area = -1.0
+
+    for face_index in component_face_indices:
+        face_uv_ids = mesh_data.faces[face_index]
+
+        area = get_polygon_area_from_positions(
+            mesh_data,
+            face_uv_ids
+        )
+
+        if area > best_area:
+            best_area = area
+            best_face_index = face_index
+
+    return best_face_index
+
+
+def find_consecutive_edge_in_quad(face_uv_ids, shared_a, shared_b):
+    """
+    Find a shared edge inside a quad.
+
+    Returns:
+        index_i, index_j
+    """
+
+    count = len(
+        face_uv_ids
+    )
+
+    for index in range(count):
+        next_index = (
+            index + 1
+        ) % count
+
+        uv_a = face_uv_ids[index]
+        uv_b = face_uv_ids[next_index]
+
+        if (
+            (
+                uv_a == shared_a and
+                uv_b == shared_b
+            ) or
+            (
+                uv_a == shared_b and
+                uv_b == shared_a
+            )
+        ):
+            return index, next_index
+
+    return None, None
+
+
+def get_neighbor_outside_vertices(face_uv_ids, shared_a, shared_b):
+    """
+    For a quad neighbor sharing edge shared_a/shared_b, return:
+
+        shared_left, shared_right, outside_left, outside_right
+
+    Meaning:
+        outside_left is connected to shared_left
+        outside_right is connected to shared_right
+    """
+
+    index_i, index_j = find_consecutive_edge_in_quad(
+        face_uv_ids,
+        shared_a,
+        shared_b
+    )
+
+    if index_i is None:
+        return None
+
+    count = len(
+        face_uv_ids
+    )
+
+    shared_left = face_uv_ids[index_i]
+    shared_right = face_uv_ids[index_j]
+
+    outside_left = face_uv_ids[
+        (
+            index_i - 1
+        ) % count
     ]
 
-    value_to_cluster_index = {}
+    outside_right = face_uv_ids[
+        (
+            index_j + 1
+        ) % count
+    ]
 
-    for value in values:
-        best_index = 0
-        best_distance = None
-
-        for index, center in enumerate(centers):
-            distance = abs(value - center)
-
-            if best_distance is None or distance < best_distance:
-                best_distance = distance
-                best_index = index
-
-        value_to_cluster_index[value] = best_index
-
-    return centers, value_to_cluster_index
-
-
-def get_adaptive_tolerance(values, span):
-    """
-    Estimate a clustering tolerance.
-
-    This keeps the first implementation simple:
-        - small enough to not merge all columns
-        - large enough to absorb wavy native unwrap rows
-    """
-
-    if not values:
-        return 0.001
-
-    if span <= 0.000001:
-        return 0.001
-
-    sorted_values = sorted(values)
-
-    diffs = []
-
-    for index in range(len(sorted_values) - 1):
-        diff = abs(
-            sorted_values[index + 1] - sorted_values[index]
-        )
-
-        if diff > 0.000001:
-            diffs.append(diff)
-
-    if not diffs:
-        return span * 0.02
-
-    diffs.sort()
-
-    median_diff = diffs[len(diffs) // 2]
-
-    # If many UVs are already almost aligned, median diff can be tiny.
-    # Clamp using span-based tolerance.
-    return max(
-        span * 0.015,
-        min(
-            span * 0.08,
-            median_diff * 0.45
-        )
+    return (
+        shared_left,
+        shared_right,
+        outside_left,
+        outside_right
     )
 
 
-def compute_gridified_positions_for_mesh(mesh_data, uv_ids):
-    """
-    Compute clean grid positions for selected UV ids on one mesh.
+def compute_face_centroid_from_grid_coords(face_uv_ids, grid_coords):
+    values = []
 
-    This is UV-space gridify:
-        - reads current preview positions
-        - estimates principal axes
-        - clusters UVs into rows and columns
-        - writes them into an evenly spaced axis-aligned grid
+    for uv_id in face_uv_ids:
+        if uv_id not in grid_coords:
+            continue
+
+        values.append(
+            grid_coords[uv_id]
+        )
+
+    if not values:
+        return (
+            0.0,
+            0.0
+        )
+
+    sum_u = sum(
+        value[0]
+        for value in values
+    )
+
+    sum_v = sum(
+        value[1]
+        for value in values
+    )
+
+    return (
+        sum_u / float(len(values)),
+        sum_v / float(len(values))
+    )
+
+
+def compute_average_side_length(mesh_data, shared_left, shared_right, outside_left, outside_right):
+    """
+    Estimate how far the neighboring quad should extend from the shared edge.
+    """
+
+    pos_shared_left = get_uv_position(
+        mesh_data,
+        shared_left
+    )
+
+    pos_shared_right = get_uv_position(
+        mesh_data,
+        shared_right
+    )
+
+    pos_outside_left = get_uv_position(
+        mesh_data,
+        outside_left
+    )
+
+    pos_outside_right = get_uv_position(
+        mesh_data,
+        outside_right
+    )
+
+    length_a = vector_distance(
+        pos_shared_left,
+        pos_outside_left
+    )
+
+    length_b = vector_distance(
+        pos_shared_right,
+        pos_outside_right
+    )
+
+    length = (
+        length_a + length_b
+    ) * 0.5
+
+    if length <= EPSILON:
+        length = vector_distance(
+            pos_shared_left,
+            pos_shared_right
+        )
+
+    return max(
+        length,
+        EPSILON
+    )
+
+
+# -----------------------------------------------------
+# Follow-active-quad style solver
+# -----------------------------------------------------
+
+def solve_quad_component_grid_coords(mesh_data, component_face_indices, neighbors):
+    """
+    Solve one connected quad component into local rectangular grid coordinates.
+
+    It:
+        - chooses a root quad
+        - makes the root a rectangle in local coordinates
+        - walks adjacent quads through shared edges
+        - extends each neighboring quad perpendicular to the shared edge
+    """
+
+    if not component_face_indices:
+        return {}, None, set()
+
+    root_face_index = choose_root_quad(
+        mesh_data,
+        component_face_indices
+    )
+
+    if root_face_index is None:
+        return {}, None, set()
+
+    root_uv_ids = mesh_data.faces[root_face_index]
+
+    if len(root_uv_ids) != 4:
+        return {}, None, set()
+
+    root_positions = [
+        get_uv_position(
+            mesh_data,
+            uv_id
+        )
+        for uv_id in root_uv_ids
+    ]
+
+    root_width = vector_distance(
+        root_positions[0],
+        root_positions[1]
+    )
+
+    root_height = vector_distance(
+        root_positions[1],
+        root_positions[2]
+    )
+
+    if root_width <= EPSILON:
+        root_width = vector_distance(
+            root_positions[2],
+            root_positions[3]
+        )
+
+    if root_height <= EPSILON:
+        root_height = vector_distance(
+            root_positions[3],
+            root_positions[0]
+        )
+
+    root_width = max(
+        root_width,
+        EPSILON
+    )
+
+    root_height = max(
+        root_height,
+        EPSILON
+    )
+
+    grid_coords = {}
+
+    grid_coords[root_uv_ids[0]] = (
+        0.0,
+        0.0
+    )
+
+    grid_coords[root_uv_ids[1]] = (
+        root_width,
+        0.0
+    )
+
+    grid_coords[root_uv_ids[2]] = (
+        root_width,
+        root_height
+    )
+
+    grid_coords[root_uv_ids[3]] = (
+        0.0,
+        root_height
+    )
+
+    solved_faces = set(
+        [
+            root_face_index
+        ]
+    )
+
+    queue = deque(
+        [
+            root_face_index
+        ]
+    )
+
+    while queue:
+        current_face_index = queue.popleft()
+        current_face_uv_ids = mesh_data.faces[current_face_index]
+
+        current_centroid = compute_face_centroid_from_grid_coords(
+            current_face_uv_ids,
+            grid_coords
+        )
+
+        for neighbor_face_index, shared_a, shared_b in neighbors.get(current_face_index, []):
+            if neighbor_face_index in solved_faces:
+                continue
+
+            neighbor_face_uv_ids = mesh_data.faces[neighbor_face_index]
+
+            edge_data = get_neighbor_outside_vertices(
+                neighbor_face_uv_ids,
+                shared_a,
+                shared_b
+            )
+
+            if not edge_data:
+                continue
+
+            shared_left, shared_right, outside_left, outside_right = edge_data
+
+            if shared_left not in grid_coords:
+                continue
+
+            if shared_right not in grid_coords:
+                continue
+
+            coord_left = grid_coords[shared_left]
+            coord_right = grid_coords[shared_right]
+
+            edge_vector = vector_sub(
+                coord_right,
+                coord_left
+            )
+
+            edge_length = vector_length(
+                edge_vector
+            )
+
+            if edge_length <= EPSILON:
+                continue
+
+            edge_direction = vector_normalize(
+                edge_vector
+            )
+
+            perpendicular = vector_perpendicular(
+                edge_direction
+            )
+
+            shared_midpoint = vector_mul(
+                vector_add(
+                    coord_left,
+                    coord_right
+                ),
+                0.5
+            )
+
+            current_side = vector_dot(
+                vector_sub(
+                    current_centroid,
+                    shared_midpoint
+                ),
+                perpendicular
+            )
+
+            if current_side > 0.0:
+                side_sign = -1.0
+            else:
+                side_sign = 1.0
+
+            side_length = compute_average_side_length(
+                mesh_data,
+                shared_left,
+                shared_right,
+                outside_left,
+                outside_right
+            )
+
+            offset = vector_mul(
+                perpendicular,
+                side_length * side_sign
+            )
+
+            outside_left_coord = vector_add(
+                coord_left,
+                offset
+            )
+
+            outside_right_coord = vector_add(
+                coord_right,
+                offset
+            )
+
+            if outside_left not in grid_coords:
+                grid_coords[outside_left] = outside_left_coord
+
+            if outside_right not in grid_coords:
+                grid_coords[outside_right] = outside_right_coord
+
+            solved_faces.add(
+                neighbor_face_index
+            )
+
+            queue.append(
+                neighbor_face_index
+            )
+
+    return grid_coords, root_face_index, solved_faces
+
+
+def map_grid_coords_to_uv_space(
+    mesh_data,
+    root_face_index,
+    grid_coords,
+    angle_offset_degrees=0.0,
+    swap_axes=False
+):
+    """
+    Map local grid coordinates back to UV space.
+
+    This version snaps the output to the nearest UV editor axis.
+    That is intentional for gridify.
+    """
+
+    if root_face_index is None:
+        return {}
+
+    root_uv_ids = mesh_data.faces[root_face_index]
+
+    if len(root_uv_ids) != 4:
+        return {}
+
+    root_pos_0 = get_uv_position(
+        mesh_data,
+        root_uv_ids[0]
+    )
+
+    root_pos_1 = get_uv_position(
+        mesh_data,
+        root_uv_ids[1]
+    )
+
+    root_pos_3 = get_uv_position(
+        mesh_data,
+        root_uv_ids[3]
+    )
+
+    original_x = vector_normalize(
+        vector_sub(
+            root_pos_1,
+            root_pos_0
+        )
+    )
+
+    if vector_length(original_x) <= EPSILON:
+        original_x = (
+            1.0,
+            0.0
+        )
+
+    axis_x = nearest_axis_from_vector(
+        original_x
+    )
+
+    if swap_axes:
+        axis_x = vector_perpendicular(
+            axis_x
+        )
+
+    angle_offset = math.radians(
+        float(angle_offset_degrees)
+    )
+
+    if abs(angle_offset) > EPSILON:
+        axis_x = rotate_vector(
+            axis_x,
+            angle_offset
+        )
+
+    axis_x = vector_normalize(
+        axis_x
+    )
+
+    axis_y = vector_perpendicular(
+        axis_x
+    )
+
+    raw_y = vector_sub(
+        root_pos_3,
+        root_pos_0
+    )
+
+    if vector_dot(axis_y, raw_y) < 0.0:
+        axis_y = vector_mul(
+            axis_y,
+            -1.0
+        )
+
+    mapped = {}
+
+    for uv_id, coord in grid_coords.items():
+        coord_x, coord_y = coord
+
+        position = vector_add(
+            root_pos_0,
+            vector_add(
+                vector_mul(
+                    axis_x,
+                    coord_x
+                ),
+                vector_mul(
+                    axis_y,
+                    coord_y
+                )
+            )
+        )
+
+        mapped[uv_id] = position
+
+    return mapped
+
+
+def translate_positions_to_match_source_center(mesh_data, uv_ids, positions):
+    """
+    Keep solved component spatially near its original UV location.
+    """
+
+    if not positions:
+        return positions
+
+    source_points = []
+    target_points = []
+
+    for uv_id in uv_ids:
+        if uv_id not in positions:
+            continue
+
+        source_points.append(
+            get_uv_position(
+                mesh_data,
+                uv_id
+            )
+        )
+
+        target_points.append(
+            positions[uv_id]
+        )
+
+    if not source_points or not target_points:
+        return positions
+
+    source_center_u = sum(
+        point[0]
+        for point in source_points
+    ) / float(len(source_points))
+
+    source_center_v = sum(
+        point[1]
+        for point in source_points
+    ) / float(len(source_points))
+
+    target_center_u = sum(
+        point[0]
+        for point in target_points
+    ) / float(len(target_points))
+
+    target_center_v = sum(
+        point[1]
+        for point in target_points
+    ) / float(len(target_points))
+
+    offset = (
+        source_center_u - target_center_u,
+        source_center_v - target_center_v
+    )
+
+    result = {}
+
+    for uv_id, position in positions.items():
+        result[uv_id] = vector_add(
+            position,
+            offset
+        )
+
+    return result
+
+
+def attach_unsolved_selected_vertices(mesh_data, selected_uv_ids, final_positions):
+    """
+    Move selected non-quad / triangle-only UVs only when they are connected to
+    solved UVs.
+
+    This avoids forcing triangles to define the grid, while still allowing rim
+    vertices to follow nearby solved quad structure a little.
+    """
+
+    if not final_positions:
+        return final_positions
+
+    selected_uv_ids = set(
+        selected_uv_ids
+    )
+
+    solved_uv_ids = set(
+        final_positions.keys()
+    )
+
+    result = dict(
+        final_positions
+    )
+
+    adjacency = getattr(
+        mesh_data,
+        "adjacency",
+        {}
+    )
+
+    for uv_id in selected_uv_ids:
+        if uv_id in result:
+            continue
+
+        neighbors = adjacency.get(
+            uv_id,
+            []
+        )
+
+        source_position = get_uv_position(
+            mesh_data,
+            uv_id
+        )
+
+        offsets = []
+
+        for neighbor_uv_id in neighbors:
+            if neighbor_uv_id not in solved_uv_ids:
+                continue
+
+            old_neighbor_position = get_uv_position(
+                mesh_data,
+                neighbor_uv_id
+            )
+
+            new_neighbor_position = final_positions[neighbor_uv_id]
+
+            offsets.append(
+                vector_sub(
+                    new_neighbor_position,
+                    old_neighbor_position
+                )
+            )
+
+        if not offsets:
+            continue
+
+        average_offset = (
+            sum(
+                offset[0]
+                for offset in offsets
+            ) / float(len(offsets)),
+            sum(
+                offset[1]
+                for offset in offsets
+            ) / float(len(offsets))
+        )
+
+        result[uv_id] = vector_add(
+            source_position,
+            average_offset
+        )
+
+    return result
+
+
+def compute_follow_active_quad_gridified_positions_for_mesh(
+    mesh_data,
+    uv_ids,
+    angle_offset_degrees=0.0,
+    u_tolerance_multiplier=1.0,
+    v_tolerance_multiplier=1.0,
+    swap_axes=False
+):
+    """
+    Clean-room follow-active-quad style gridify.
+
+    Behavior:
+        - complete selected quad faces drive the grid
+        - triangles and n-gons do not drive the grid
+        - triangle/rim vertices can follow nearby solved quads
+        - no global PCA bounding-box remapping
     """
 
     if not mesh_data or not uv_ids:
         return {}
 
-    ensure_preview_positions(mesh_data)
+    ensure_preview_positions(
+        mesh_data
+    )
 
-    source_positions = {}
+    uv_ids = sorted(
+        set(
+            uv_ids
+        )
+    )
 
-    for uv_id in uv_ids:
-        if uv_id not in mesh_data.preview_uv_positions:
+    selected_uv_ids = set(
+        uv_ids
+    )
+
+    quad_face_indices = get_complete_selected_quad_indices(
+        mesh_data,
+        selected_uv_ids
+    )
+
+    if not quad_face_indices:
+        print("[eTrim] Gridify skipped. No complete selected quad faces.")
+        return {}
+
+    neighbors = build_quad_adjacency(
+        mesh_data,
+        quad_face_indices
+    )
+
+    components = split_face_components(
+        quad_face_indices,
+        neighbors
+    )
+
+    final_positions = {}
+
+    solved_face_count = 0
+
+    for component in components:
+        grid_coords, root_face_index, solved_faces = solve_quad_component_grid_coords(
+            mesh_data,
+            component,
+            neighbors
+        )
+
+        if not grid_coords:
             continue
 
-        source_positions[uv_id] = get_uv_position(
+        if root_face_index is None:
+            continue
+
+        mapped_positions = map_grid_coords_to_uv_space(
             mesh_data,
-            uv_id
+            root_face_index,
+            grid_coords,
+            angle_offset_degrees=angle_offset_degrees,
+            swap_axes=swap_axes
         )
 
-    if len(source_positions) < 2:
+        component_uv_ids = sorted(
+            grid_coords.keys()
+        )
+
+        mapped_positions = translate_positions_to_match_source_center(
+            mesh_data,
+            component_uv_ids,
+            mapped_positions
+        )
+
+        for uv_id, position in mapped_positions.items():
+            if uv_id not in selected_uv_ids:
+                continue
+
+            final_positions[uv_id] = position
+
+        solved_face_count += len(
+            solved_faces
+        )
+
+    final_positions = attach_unsolved_selected_vertices(
+        mesh_data,
+        selected_uv_ids,
+        final_positions
+    )
+
+    if not final_positions:
+        print("[eTrim] Gridify produced no topology-aware positions.")
         return {}
-
-    points = list(source_positions.values())
-
-    u_min, v_min, u_max, v_max = compute_bounds(
-        points
-    )
-
-    width = u_max - u_min
-    height = v_max - v_min
-
-    if width <= 0.000001 or height <= 0.000001:
-        return {}
-
-    center_u = (u_min + u_max) * 0.5
-    center_v = (v_min + v_max) * 0.5
-
-    angle = compute_pca_angle(
-        points
-    )
-
-    # Rotate into local PCA space for better clustering.
-    local_positions = {}
-
-    for uv_id, position in source_positions.items():
-        u, v = position
-
-        local_u, local_v = rotate_point(
-            u,
-            v,
-            center_u,
-            center_v,
-            -angle
-        )
-
-        local_positions[uv_id] = (
-            local_u,
-            local_v
-        )
-
-    local_points = list(local_positions.values())
-
-    local_u_min, local_v_min, local_u_max, local_v_max = compute_bounds(
-        local_points
-    )
-
-    local_width = local_u_max - local_u_min
-    local_height = local_v_max - local_v_min
-
-    if local_width <= 0.000001 or local_height <= 0.000001:
-        return {}
-
-    local_u_values = [
-        position[0]
-        for position in local_positions.values()
-    ]
-
-    local_v_values = [
-        position[1]
-        for position in local_positions.values()
-    ]
-
-    u_tolerance = get_adaptive_tolerance(
-        local_u_values,
-        local_width
-    )
-
-    v_tolerance = get_adaptive_tolerance(
-        local_v_values,
-        local_height
-    )
-
-    column_centers, value_to_column = cluster_values(
-        local_u_values,
-        u_tolerance
-    )
-
-    row_centers, value_to_row = cluster_values(
-        local_v_values,
-        v_tolerance
-    )
-
-    column_count = len(column_centers)
-    row_count = len(row_centers)
-
-    if column_count < 2 and row_count < 2:
-        return {}
-
-    result = {}
-
-    for uv_id, local_position in local_positions.items():
-        local_u, local_v = local_position
-
-        column_index = value_to_column.get(
-            local_u,
-            0
-        )
-
-        row_index = value_to_row.get(
-            local_v,
-            0
-        )
-
-        if column_count <= 1:
-            normalized_u = 0.5
-        else:
-            normalized_u = float(column_index) / float(column_count - 1)
-
-        if row_count <= 1:
-            normalized_v = 0.5
-        else:
-            normalized_v = float(row_index) / float(row_count - 1)
-
-        new_u = u_min + normalized_u * width
-        new_v = v_min + normalized_v * height
-
-        result[uv_id] = (
-            new_u,
-            new_v
-        )
 
     print("[eTrim] Gridify mesh:")
     print("    mesh:", mesh_data.mesh_name)
-    print("    uv count:", len(result))
-    print("    columns:", column_count)
-    print("    rows:", row_count)
+    print("    uv count:", len(final_positions))
+    print("    quad faces:", len(quad_face_indices))
+    print("    solved quad faces:", solved_face_count)
+    print("    components:", len(components))
 
-    return result
+    return final_positions
+
+
+# -----------------------------------------------------
+# Public solver entry points
+# -----------------------------------------------------
+
+def compute_gridified_positions_for_mesh(
+    mesh_data,
+    uv_ids,
+    angle_offset_degrees=0.0,
+    u_tolerance_multiplier=1.0,
+    v_tolerance_multiplier=1.0,
+    swap_axes=False
+):
+    """
+    Public gridify solver.
+
+    The tolerance arguments are kept for heuristic compatibility.
+    This topology-aware implementation does not do global U/V clustering.
+    """
+
+    return compute_follow_active_quad_gridified_positions_for_mesh(
+        mesh_data,
+        uv_ids,
+        angle_offset_degrees=angle_offset_degrees,
+        u_tolerance_multiplier=u_tolerance_multiplier,
+        v_tolerance_multiplier=v_tolerance_multiplier,
+        swap_axes=swap_axes
+    )
 
 
 def apply_gridified_positions(mesh_data, positions):
@@ -589,7 +1479,9 @@ def apply_gridified_positions(mesh_data, positions):
     if not positions:
         return False
 
-    ensure_preview_positions(mesh_data)
+    ensure_preview_positions(
+        mesh_data
+    )
 
     for uv_id, uv_position in positions.items():
         mesh_data.preview_uv_positions[uv_id] = uv_position
@@ -601,10 +1493,10 @@ def gridify_viewer_selection_to_preview(viewer):
     """
     Gridify current viewer UV selection into preview UV positions.
 
-    First version:
-        - UV-space row/column clustering
-        - good after native unwrap
-        - does not yet perform topology-aware grid solving
+    New version:
+        - topology-aware
+        - quad propagation based
+        - does not force whole selection into a rectangular PCA grid
     """
 
     if not viewer:
@@ -624,7 +1516,13 @@ def gridify_viewer_selection_to_preview(viewer):
         print("[eTrim] Empty UV cache. Gridify skipped.")
         return False
 
-    uv_pairs = get_gridify_uv_pairs(viewer)
+    split_selected_faces_if_needed(
+        viewer
+    )
+
+    uv_pairs = get_gridify_uv_pairs(
+        viewer
+    )
 
     if not uv_pairs:
         print("[eTrim] No selected UVs found for gridify.")
@@ -638,7 +1536,9 @@ def gridify_viewer_selection_to_preview(viewer):
 
     for mesh_data, uv_ids in grouped.items():
         uv_ids = sorted(
-            set(uv_ids)
+            set(
+                uv_ids
+            )
         )
 
         positions = compute_gridified_positions_for_mesh(
