@@ -783,9 +783,9 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         enabled = self.enable_uv_selection_btn.isChecked()
 
         if enabled:
-            self.enable_uv_selection_btn.setText("UV Sel: ON")
+            self.enable_uv_selection_btn.setText("UV: ON")
         else:
-            self.enable_uv_selection_btn.setText("UV Sel: OFF")
+            self.enable_uv_selection_btn.setText("UV: OFF")
 
         self.viewer.set_uv_selection_enabled(enabled)
         self.sync_ui_from_viewer_state()
@@ -795,9 +795,9 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         enabled = self.enable_box_selection_btn.isChecked()
 
         if enabled:
-            self.enable_box_selection_btn.setText("Box Sel: ON")
+            self.enable_box_selection_btn.setText("Box: ON")
         else:
-            self.enable_box_selection_btn.setText("Box Sel: OFF")
+            self.enable_box_selection_btn.setText("Box: OFF")
 
         self.viewer.set_box_selection_enabled(enabled)
     # -----------------------------------------------------

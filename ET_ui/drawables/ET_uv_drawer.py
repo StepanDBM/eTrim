@@ -2667,18 +2667,13 @@ class EUVDrawer(EDrawableObjectController):
             return
 
         unwrap_result = ET_uv_unwrap.unwrap_viewer_selection_to_preview(
-            self.viewer,
-            iterations=1,
-            pack=False
-        )
+            self.viewer, iterations=1, pack=False)
 
         if not unwrap_result:
             print("[eTrim] Native unwrap failed. Gridify skipped.")
             return
 
-        gridify_result = ET_gridify.gridify_viewer_selection_to_preview(
-            self.viewer
-        )
+        gridify_result = ET_gridify.gridify_viewer_selection_to_preview(self.viewer)
 
         if gridify_result:
             print("[eTrim] Native unwrap + gridify complete.")

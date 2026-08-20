@@ -42,6 +42,15 @@ class EUVMeshUVData(object):
         # face index in mesh_data.faces -> Maya polygon id
         self.face_polygon_ids = []
 
+        # face index in mesh_data.faces -> Maya mesh edge ids in face order
+        self.face_edge_ids = []
+
+        # Maya edge id -> set(Maya polygon ids)
+        self.edge_polygon_ids = defaultdict(set)
+
+        # Maya mesh edges that must become persistent UV borders on Apply.
+        self.pending_uv_cut_edge_ids = set()
+
         # uv_id -> set(connected uv ids)
         self.adjacency = defaultdict(set)
 
@@ -174,6 +183,50 @@ def get_polygon_uv_id(mesh_fn, polygon_id, local_vertex_id, uv_set):
             local_vertex_id
         )
 
+def build_mesh_edge_polygon_map(dag_path):
+    """
+    Return Maya mesh edge topology.
+
+    Returns:
+        edge_polygon_ids:
+            edge_id -> set(connected Maya polygon ids)
+
+        vertex_pair_to_edge_id:
+            sorted(vertex_a, vertex_b) -> Maya edge id
+    """
+
+    edge_polygon_ids = defaultdict(set)
+    vertex_pair_to_edge_id = {}
+
+    edge_iterator = om.MItMeshEdge(dag_path)
+
+    while not edge_iterator.isDone():
+        edge_id = edge_iterator.index()
+
+        vertex_a = edge_iterator.vertexId(0)
+        vertex_b = edge_iterator.vertexId(1)
+
+        vertex_key = tuple(
+            sorted(
+                (
+                    int(vertex_a),
+                    int(vertex_b)
+                )
+            )
+        )
+
+        vertex_pair_to_edge_id[vertex_key] = int(edge_id)
+
+        connected_faces = edge_iterator.getConnectedFaces()
+
+        for polygon_id in connected_faces:
+            edge_polygon_ids[int(edge_id)].add(
+                int(polygon_id)
+            )
+
+        edge_iterator.next()
+
+    return edge_polygon_ids, vertex_pair_to_edge_id
 
 def build_mesh_uv_data(object_name, face_ids):
     dag_path = get_mesh_dag_path(object_name)
@@ -205,6 +258,12 @@ def build_mesh_uv_data(object_name, face_ids):
     face_id_set = set(face_ids)
     world_points = mesh_fn.getPoints(om.MSpace.kWorld)
 
+    edge_polygon_ids, vertex_pair_to_edge_id = build_mesh_edge_polygon_map(
+        dag_path
+    )
+
+    mesh_data.edge_polygon_ids = edge_polygon_ids
+
     for polygon_id in sorted(face_id_set):
         vertex_count = mesh_fn.polygonVertexCount(polygon_id)
 
@@ -230,6 +289,28 @@ def build_mesh_uv_data(object_name, face_ids):
         mesh_data.face_polygon_ids.append(polygon_id)
 
         polygon_vertex_ids = mesh_fn.getPolygonVertices(polygon_id)
+
+        face_edge_ids = []
+
+        for index, vertex_a in enumerate(polygon_vertex_ids):
+            vertex_b = polygon_vertex_ids[
+                (index + 1
+                ) % len(polygon_vertex_ids)
+            ]
+
+            vertex_key = tuple(sorted((int(vertex_a), int(vertex_b))))
+
+            edge_id = vertex_pair_to_edge_id.get(vertex_key)
+
+            if edge_id is None:
+                raise RuntimeError(
+                    "[eTrim] Could not resolve Maya edge for polygon {} vertices {}."
+                    .format(polygon_id, vertex_key)
+                )
+
+            face_edge_ids.append(int(edge_id))
+
+        mesh_data.face_edge_ids.append(face_edge_ids)
 
         polygon_world_points = [
             world_points[vertex_id]
@@ -537,6 +618,73 @@ def prepare_vertex_uvs_for_preview_edit(mesh_data, selected_uv_ids):
 
     return uv_pairs
 
+def get_selected_region_boundary_edge_ids(mesh_data, face_indices):
+    """
+    Return real Maya mesh edges on the outer boundary of a selected face region.
+
+    An edge is included when:
+        - at least one selected polygon uses the edge
+        - at least one connected polygon is outside the selected region
+
+    Internal edges between selected faces are not cut.
+    """
+
+    if not mesh_data or not face_indices:
+        return set()
+
+    selected_face_indices = set(face_indices)
+    selected_polygon_ids = set()
+
+    for face_index in selected_face_indices:
+        if face_index < 0:
+            continue
+
+        if face_index >= len(mesh_data.face_polygon_ids):
+            continue
+
+        selected_polygon_ids.add(
+            int(mesh_data.face_polygon_ids[face_index])
+        )
+
+    boundary_edge_ids = set()
+
+    for face_index in selected_face_indices:
+        if face_index < 0:
+            continue
+
+        if face_index >= len(mesh_data.face_edge_ids):
+            continue
+
+        face_edge_ids = mesh_data.face_edge_ids[face_index]
+
+        for edge_id in face_edge_ids:
+            edge_id = int(edge_id)
+
+            connected_polygon_ids = mesh_data.edge_polygon_ids.get(
+                edge_id,
+                set()
+            )
+
+            has_selected_polygon = False
+            has_outside_polygon = False
+
+            for polygon_id in connected_polygon_ids:
+                polygon_id = int(polygon_id)
+
+                if polygon_id in selected_polygon_ids:
+                    has_selected_polygon = True
+                else:
+                    has_outside_polygon = True
+
+            # Internal edges between selected faces are not cut.
+            #
+            # Mesh boundary edges only have one connected polygon and already
+            # represent an open mesh boundary, so they do not need polyMapCut.
+            if has_selected_polygon and has_outside_polygon:
+                boundary_edge_ids.add(edge_id)
+
+    return boundary_edge_ids
+
 def split_faces_to_preview_shell(mesh_data, face_indices, duplicate_all=False):
     """
     Split selected faces into their own preview UV island.
@@ -554,6 +702,12 @@ def split_faces_to_preview_shell(mesh_data, face_indices, duplicate_all=False):
     ensure_preview_uv_storage(mesh_data)
 
     selected_face_indices = set(face_indices)
+
+    boundary_edge_ids = get_selected_region_boundary_edge_ids(
+        mesh_data, selected_face_indices
+    )
+
+    mesh_data.pending_uv_cut_edge_ids.update(boundary_edge_ids)
 
     # Find UV ids used by unselected faces.
     outside_uv_ids = set()
@@ -606,25 +760,97 @@ def split_faces_to_preview_shell(mesh_data, face_indices, duplicate_all=False):
     if did_split:
         rebuild_preview_topology(mesh_data)
 
-    return True
+    return bool(did_split or boundary_edge_ids)
+
+def apply_pending_uv_cuts_to_maya(mesh_data):
+    """
+    Apply queued eTrim detach boundaries as native Maya UV cuts.
+
+    Returns:
+        number of Maya mesh edges cut
+    """
+
+    edge_ids = sorted(
+        set(getattr(
+                mesh_data,
+                "pending_uv_cut_edge_ids",
+                set()
+            )
+        )
+    )
+
+    if not edge_ids:
+        return 0
+
+    try:
+        cmds.polyUVSet(
+            mesh_data.mesh_name,
+            currentUVSet=True,
+            uvSet=mesh_data.uv_set
+        )
+    except Exception:
+        pass
+
+    edge_components = [
+        "{}.e[{}]".format(mesh_data.mesh_name, edge_id)
+        for edge_id in edge_ids
+    ]
+
+    cmds.polyMapCut(edge_components, constructionHistory=True)
+    cmds.dgdirty(mesh_data.mesh_name)
+    cmds.refresh(force=True)
+
+    print("[eTrim] Applied persistent Maya UV cuts:")
+    print("        mesh:", mesh_data.mesh_name)
+    print("        edges:", len(edge_ids))
+
+    return len(edge_ids)
+
+def build_desired_polygon_corner_positions(mesh_data):
+    """
+    Capture desired preview coordinates by Maya polygon corner.
+
+    Returns:
+        polygon_id -> [(u, v), ...]
+    """
+
+    desired_positions = {}
+
+    for local_face_index, polygon_id in enumerate(mesh_data.face_polygon_ids):
+        if local_face_index >= len(mesh_data.faces):
+            continue
+
+        face_uv_ids = mesh_data.faces[local_face_index]
+        face_positions = []
+
+        for preview_uv_id in face_uv_ids:
+            if preview_uv_id in mesh_data.preview_uv_positions:
+                position = mesh_data.preview_uv_positions[preview_uv_id]
+            else:
+                position = mesh_data.uv_positions[preview_uv_id]
+
+            face_positions.append(
+                (
+                    float(position[0]),
+                    float(position[1])
+                )
+            )
+
+        desired_positions[int(polygon_id)] = face_positions
+
+    return desired_positions
 
 def apply_preview_to_maya(uv_cache):
     """
-    Apply viewer preview UVs back to Maya.
+    Apply preview UV topology and positions to Maya.
 
-    Supports:
-        - moved original UVs
-        - fitted UVs
-        - rotated UVs
-        - preview-split UV ids created by split_faces_to_preview_shell()
+    Topology changes:
+        Queued detach edges are applied with native polyMapCut.
 
-    Important:
-        Preview UV ids are not automatically Maya UV ids.
+    Position changes:
+        Preview positions are written to the real post-cut Maya UV ids.
 
-        Original preview UV ids update existing Maya UVs.
-        Generated preview UV ids append new Maya UVs.
-
-    This version intentionally does NOT call clearUVs().
+    The UV cache is then rebuilt from Maya.
     """
 
     if not uv_cache or not uv_cache.has_data():
@@ -632,7 +858,10 @@ def apply_preview_to_maya(uv_cache):
         print("[eTrim] No UV cache to apply.")
         return False
 
-    cmds.undoInfo(openChunk=True)
+    cmds.undoInfo(
+        openChunk=True,
+        chunkName="eTrim Apply Preview UVs"
+    )
 
     try:
         applied_mesh_count = 0
@@ -641,30 +870,27 @@ def apply_preview_to_maya(uv_cache):
             if not mesh_data.preview_uv_positions:
                 continue
 
-            dag_path = get_mesh_dag_path(
-                mesh_data.mesh_name
+            # Preserve desired coordinates by polygon corner before Maya
+            # generates new UV ids for detached borders.
+            desired_polygon_positions = build_desired_polygon_corner_positions(
+                mesh_data
             )
 
-            mesh_fn = om.MFnMesh(
-                dag_path
+            cut_count = apply_pending_uv_cuts_to_maya(
+                mesh_data
             )
 
+            # Re-query the evaluated output after polyMapCut.
+            dag_path = get_mesh_dag_path(mesh_data.mesh_name)
+            mesh_fn = om.MFnMesh(dag_path)
             uv_set = mesh_data.uv_set
 
             try:
-                mesh_fn.setCurrentUVSetName(
-                    uv_set
-                )
+                mesh_fn.setCurrentUVSetName(uv_set)
             except Exception:
                 pass
 
-            # -------------------------------------------------
-            # Read current Maya UV arrays.
-            # -------------------------------------------------
-
-            current_u_array, current_v_array = mesh_fn.getUVs(
-                uv_set
-            )
+            current_u_array, current_v_array = mesh_fn.getUVs(uv_set)
 
             new_u_values = [
                 float(value)
@@ -676,24 +902,21 @@ def apply_preview_to_maya(uv_cache):
                 for value in current_v_array
             ]
 
-            original_maya_uv_count = len(
-                new_u_values
-            )
+            desired_position_by_maya_uv_id = {}
+            conflicting_uv_ids = set()
 
-            # -------------------------------------------------
-            # Read current assignments for uncached faces.
-            # -------------------------------------------------
+            # Maya now owns the split topology. Query every cached polygon
+            # corner to find the real UV ids created by polyMapCut.
+            for polygon_id, desired_positions in desired_polygon_positions.items():
+                vertex_count = mesh_fn.polygonVertexCount(polygon_id)
 
-            polygon_count = mesh_fn.numPolygons
-
-            existing_polygon_uv_ids = {}
-
-            for polygon_id in range(polygon_count):
-                vertex_count = mesh_fn.polygonVertexCount(
-                    polygon_id
-                )
-
-                polygon_uv_ids = []
+                if vertex_count != len(desired_positions):
+                    raise RuntimeError(
+                        "[eTrim] Polygon corner count changed for polygon {}."
+                        .format(
+                            polygon_id
+                        )
+                    )
 
                 for local_vertex_id in range(vertex_count):
                     maya_uv_id = get_polygon_uv_id(
@@ -703,81 +926,55 @@ def apply_preview_to_maya(uv_cache):
                         uv_set
                     )
 
-                    polygon_uv_ids.append(
-                        int(maya_uv_id)
+                    maya_uv_id = int(maya_uv_id)
+                    desired_position = desired_positions[local_vertex_id]
+
+                    if maya_uv_id in desired_position_by_maya_uv_id:
+                        previous_position = desired_position_by_maya_uv_id[
+                            maya_uv_id
+                        ]
+
+                        du = abs(
+                            previous_position[0] - desired_position[0]
+                        )
+
+                        dv = abs(
+                            previous_position[1] - desired_position[1]
+                        )
+
+                        if du > 0.000001 or dv > 0.000001:
+                            conflicting_uv_ids.add(maya_uv_id)
+
+                    else:
+                        desired_position_by_maya_uv_id[maya_uv_id] = (
+                            float(desired_position[0]),
+                            float(desired_position[1])
+                        )
+
+            if conflicting_uv_ids:
+                raise RuntimeError(
+                    "[eTrim] Maya UV cuts did not separate all required "
+                    "corners. Conflicting Maya UV ids: {}"
+                    .format(
+                        sorted(conflicting_uv_ids)
                     )
-
-                existing_polygon_uv_ids[polygon_id] = polygon_uv_ids
-
-            # -------------------------------------------------
-            # Build preview UV id -> Maya UV id map.
-            # -------------------------------------------------
-
-            preview_to_maya_uv_id = {}
-
-            # These are the UV ids that existed when the cache was built.
-            # Only these may safely update existing Maya UVs by id.
-            original_cache_uv_ids = set(
-                mesh_data.uv_positions.keys()
-            )
-
-            original_preview_uv_count = 0
-            generated_preview_uv_count = 0
-
-            preview_uv_ids = sorted(
-                mesh_data.preview_uv_positions.keys()
-            )
-
-            for preview_uv_id in preview_uv_ids:
-                u, v = mesh_data.preview_uv_positions[preview_uv_id]
-
-                original_uv_id = mesh_data.preview_uv_original_ids.get(
-                    preview_uv_id,
-                    preview_uv_id
                 )
 
-                is_original_preview_uv = (
-                    preview_uv_id in original_cache_uv_ids and
-                    original_uv_id == preview_uv_id and
-                    preview_uv_id < original_maya_uv_count
-                )
+            # Apply preview positions to Maya's real post-cut UV ids.
+            for maya_uv_id, position in desired_position_by_maya_uv_id.items():
+                if maya_uv_id < 0:
+                    continue
 
-                if is_original_preview_uv:
-                    maya_uv_id = int(
-                        preview_uv_id
+                if maya_uv_id >= len(new_u_values):
+                    raise RuntimeError(
+                        "[eTrim] Invalid Maya UV id after cut: {}"
+                        .format(
+                            maya_uv_id
+                        )
                     )
 
-                    new_u_values[maya_uv_id] = float(
-                        u
-                    )
-
-                    new_v_values[maya_uv_id] = float(
-                        v
-                    )
-
-                    original_preview_uv_count += 1
-
-                else:
-                    maya_uv_id = len(
-                        new_u_values
-                    )
-
-                    new_u_values.append(
-                        float(u)
-                    )
-
-                    new_v_values.append(
-                        float(v)
-                    )
-
-                    generated_preview_uv_count += 1
-
-                preview_to_maya_uv_id[preview_uv_id] = maya_uv_id
-
-            # -------------------------------------------------
-            # Push updated UV positions.
-            # Do NOT clear UVs.
-            # -------------------------------------------------
+                new_u_values[maya_uv_id] = float(position[0])
+                new_v_values[maya_uv_id] = float(position[1])
 
             mesh_fn.setUVs(
                 om.MFloatArray(new_u_values),
@@ -785,211 +982,14 @@ def apply_preview_to_maya(uv_cache):
                 uv_set
             )
 
-            # -------------------------------------------------
-            # Build cached face map:
-            # Maya polygon id -> preview face uv ids
-            # -------------------------------------------------
-
-            cached_face_map = {}
-
-            for local_face_index, polygon_id in enumerate(mesh_data.face_polygon_ids):
-                if local_face_index >= len(mesh_data.faces):
-                    continue
-
-                cached_face_map[polygon_id] = mesh_data.faces[local_face_index]
-
-            # -------------------------------------------------
-            # Build complete assignment table for all polygons.
-            #
-            # Cached faces use preview topology.
-            # Uncached faces keep existing Maya assignments.
-            # -------------------------------------------------
-
-            uv_counts = []
-            uv_ids = []
-
-            for polygon_id in range(polygon_count):
-                vertex_count = mesh_fn.polygonVertexCount(
-                    polygon_id
-                )
-
-                uv_counts.append(
-                    vertex_count
-                )
-
-                if polygon_id in cached_face_map:
-                    preview_face_uv_ids = cached_face_map[polygon_id]
-
-                    for preview_uv_id in preview_face_uv_ids:
-                        maya_uv_id = preview_to_maya_uv_id.get(
-                            preview_uv_id
-                        )
-
-                        if maya_uv_id is None:
-                            maya_uv_id = mesh_data.preview_uv_original_ids.get(
-                                preview_uv_id,
-                                preview_uv_id
-                            )
-
-                        uv_ids.append(
-                            int(maya_uv_id)
-                        )
-
-                else:
-                    existing_uv_ids = existing_polygon_uv_ids.get(
-                        polygon_id,
-                        []
-                    )
-
-                    if len(existing_uv_ids) == vertex_count:
-                        for maya_uv_id in existing_uv_ids:
-                            uv_ids.append(
-                                int(maya_uv_id)
-                            )
-                    else:
-                        for local_vertex_id in range(vertex_count):
-                            maya_uv_id = get_polygon_uv_id(
-                                mesh_fn,
-                                polygon_id,
-                                local_vertex_id,
-                                uv_set
-                            )
-
-                            uv_ids.append(
-                                int(maya_uv_id)
-                            )
-
-            # -------------------------------------------------
-            # Apply UV assignments.
-            #
-            # Do NOT call clearUVs().
-            # clearUVs() can destroy the UV set in this workflow.
-            # -------------------------------------------------
-
-            mesh_fn.assignUVs(
-                om.MIntArray(uv_counts),
-                om.MIntArray(uv_ids),
-                uv_set
-            )
-
             mesh_fn.updateSurface()
 
-            # -------------------------------------------------
-            # Verify cached face assignments.
-            # -------------------------------------------------
-
-            verified_changed_count = 0
-            verified_cached_count = 0
-
-            for polygon_id, preview_face_uv_ids in cached_face_map.items():
-                verified_cached_count += 1
-
-                expected_ids = []
-
-                for preview_uv_id in preview_face_uv_ids:
-                    expected_ids.append(
-                        int(
-                            preview_to_maya_uv_id.get(
-                                preview_uv_id,
-                                preview_uv_id
-                            )
-                        )
-                    )
-
-                actual_ids = []
-
-                vertex_count = mesh_fn.polygonVertexCount(
-                    polygon_id
-                )
-
-                for local_vertex_id in range(vertex_count):
-                    actual_uv_id = get_polygon_uv_id(
-                        mesh_fn,
-                        polygon_id,
-                        local_vertex_id,
-                        uv_set
-                    )
-
-                    actual_ids.append(
-                        int(actual_uv_id)
-                    )
-
-                if actual_ids == expected_ids:
-                    verified_changed_count += 1
-                else:
-                    """
-                    print("[eTrim] UV assignment verification mismatch:")
-                    print("        mesh:", mesh_data.mesh_name)
-                    print("        polygon:", polygon_id)
-                    print("        expected:", expected_ids)
-                    print("        actual:", actual_ids)
-                    """
-
-            # -------------------------------------------------
-            # Update preview cache to actual Maya UV ids.
-            #
-            # This prevents repeated Apply from appending the same generated
-            # preview UVs again and again.
-            # -------------------------------------------------
-
-            remapped_preview_positions = {}
-            remapped_preview_original_ids = {}
-            remapped_faces = []
-
-            for preview_uv_id, uv_position in mesh_data.preview_uv_positions.items():
-                maya_uv_id = preview_to_maya_uv_id.get(
-                    preview_uv_id,
-                    preview_uv_id
-                )
-
-                remapped_preview_positions[maya_uv_id] = uv_position
-                remapped_preview_original_ids[maya_uv_id] = maya_uv_id
-
-            for face_uv_ids in mesh_data.faces:
-                remapped_face_uv_ids = []
-
-                for preview_uv_id in face_uv_ids:
-                    maya_uv_id = preview_to_maya_uv_id.get(
-                        preview_uv_id,
-                        preview_uv_id
-                    )
-
-                    remapped_face_uv_ids.append(
-                        maya_uv_id
-                    )
-
-                remapped_faces.append(
-                    remapped_face_uv_ids
-                )
-
-            mesh_data.preview_uv_positions = remapped_preview_positions
-            mesh_data.preview_uv_original_ids = remapped_preview_original_ids
-            mesh_data.uv_positions = dict(
-                remapped_preview_positions
-            )
-            mesh_data.faces = remapped_faces
-
-            if mesh_data.preview_uv_positions:
-                mesh_data.next_preview_uv_id = max(
-                    mesh_data.preview_uv_positions.keys()
-                ) + 1
-            else:
-                mesh_data.next_preview_uv_id = 0
-
-            rebuild_preview_topology(
-                mesh_data
-            )
-
-            # -------------------------------------------------
-            # Force Maya to refresh.
-            # -------------------------------------------------
-
             try:
-                cmds.dgdirty(
-                    mesh_data.mesh_name
-                )
+                cmds.dgdirty(mesh_data.mesh_name)
             except Exception:
                 pass
+
+            cmds.refresh(force=True)
 
             try:
                 shell_count = cmds.polyEvaluate(
@@ -998,25 +998,22 @@ def apply_preview_to_maya(uv_cache):
                 )
             except Exception:
                 shell_count = None
-            """
+
             print("[eTrim] Applied preview UVs to mesh:")
             print("        mesh:", mesh_data.mesh_name)
-            print("        original preview UVs:", original_preview_uv_count)
-            print("        generated preview UVs:", generated_preview_uv_count)
-            print("        total Maya UVs before:", original_maya_uv_count)
-            print("        total Maya UVs after:", len(new_u_values))
-            print("        verified cached faces:", verified_changed_count, "/", verified_cached_count)
-            print("        uv shell count:", shell_count)
-            """
+            print("        persistent cut edges:", cut_count)
+            print("        updated Maya UVs:", len(desired_position_by_maya_uv_id))
+            print("        Maya UV shells:", shell_count)
+
+            # Rebuild from Maya's real post-cut UV topology.
+            replace_mesh_data_from_maya(mesh_data)
 
             applied_mesh_count += 1
 
         print("[eTrim] Applied preview UVs to Maya.")
         print("        meshes:", applied_mesh_count)
 
-        cmds.refresh(
-            force=True
-        )
+        cmds.refresh(force=True)
 
         return applied_mesh_count > 0
 
@@ -1028,6 +1025,35 @@ def apply_preview_to_maya(uv_cache):
 
     finally:
         cmds.undoInfo(closeChunk=True)
+
+def replace_mesh_data_from_maya(mesh_data):
+    """
+    Re-read the cached polygon set from Maya while preserving mesh_data identity.
+
+    Preserving object identity avoids invalidating viewer references.
+    """
+
+    refreshed_data = build_mesh_uv_data(
+        mesh_data.mesh_name,
+        mesh_data.face_polygon_ids
+    )
+
+    mesh_data.uv_set = refreshed_data.uv_set
+    mesh_data.uv_positions = refreshed_data.uv_positions
+    mesh_data.preview_uv_positions = refreshed_data.preview_uv_positions
+    mesh_data.preview_uv_original_ids = refreshed_data.preview_uv_original_ids
+    mesh_data.next_preview_uv_id = refreshed_data.next_preview_uv_id
+
+    mesh_data.edges = refreshed_data.edges
+    mesh_data.faces = refreshed_data.faces
+    mesh_data.face_polygon_ids = refreshed_data.face_polygon_ids
+    mesh_data.face_edge_ids = refreshed_data.face_edge_ids
+    mesh_data.edge_polygon_ids = refreshed_data.edge_polygon_ids
+    mesh_data.adjacency = refreshed_data.adjacency
+    mesh_data.shells = refreshed_data.shells
+    mesh_data.face_world_areas = refreshed_data.face_world_areas
+
+    mesh_data.pending_uv_cut_edge_ids = set()
 
 def build_cache_from_selection():
     """
