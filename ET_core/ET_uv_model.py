@@ -840,6 +840,79 @@ def build_desired_polygon_corner_positions(mesh_data):
 
     return desired_positions
 
+def apply_maya_uv_positions(
+    mesh_data,
+    positions_by_maya_uv_id
+):
+    """
+    Apply absolute UV positions through Maya commands.
+
+    This creates persistent Maya UV edits after polyMapCut, rather than
+    modifying only the currently evaluated mesh output.
+
+    positions_by_maya_uv_id:
+        {
+            maya_uv_id: (u, v)
+        }
+    """
+
+    if not mesh_data or not positions_by_maya_uv_id:
+        return 0
+
+    try:
+        cmds.polyUVSet(
+            mesh_data.mesh_name,
+            currentUVSet=True,
+            uvSet=mesh_data.uv_set
+        )
+    except Exception:
+        pass
+
+    applied_count = 0
+
+    for maya_uv_id, position in positions_by_maya_uv_id.items():
+        maya_uv_id = int(maya_uv_id)
+
+        if maya_uv_id < 0:
+            continue
+
+        uv_component = "{}.map[{}]".format(
+            mesh_data.mesh_name,
+            maya_uv_id
+        )
+
+        try:
+            cmds.polyEditUV(
+                uv_component,
+                relative=False,
+                uValue=float(position[0]),
+                vValue=float(position[1]),
+                uvSetName=mesh_data.uv_set
+            )
+
+            applied_count += 1
+
+        except TypeError:
+            # Compatibility fallback for Maya versions that accept u/v
+            # aliases but not the long uValue/vValue keyword names.
+            cmds.polyEditUV(
+                uv_component,
+                relative=False,
+                u=float(position[0]),
+                v=float(position[1]),
+                uvSetName=mesh_data.uv_set
+            )
+
+            applied_count += 1
+
+        except Exception as exc:
+            print("[eTrim] Could not apply Maya UV position:")
+            print("        mesh:", mesh_data.mesh_name)
+            print("        uv id:", maya_uv_id)
+            print(exc)
+
+    return applied_count
+
 def apply_preview_to_maya(uv_cache):
     """
     Apply preview UV topology and positions to Maya.
@@ -960,10 +1033,22 @@ def apply_preview_to_maya(uv_cache):
                     )
                 )
 
-            # Apply preview positions to Maya's real post-cut UV ids.
-            for maya_uv_id, position in desired_position_by_maya_uv_id.items():
+            # -------------------------------------------------
+            # Apply preview positions as persistent Maya UV edits.
+            #
+            # Do not use MFnMesh.setUVs() here. After polyMapCut creates a
+            # construction-history node, direct output-mesh UV writes can be
+            # replaced the next time Maya evaluates the history chain.
+            # -------------------------------------------------
+
+            for maya_uv_id in desired_position_by_maya_uv_id.keys():
                 if maya_uv_id < 0:
-                    continue
+                    raise RuntimeError(
+                        "[eTrim] Invalid negative Maya UV id after cut: {}"
+                        .format(
+                            maya_uv_id
+                        )
+                    )
 
                 if maya_uv_id >= len(new_u_values):
                     raise RuntimeError(
@@ -973,16 +1058,18 @@ def apply_preview_to_maya(uv_cache):
                         )
                     )
 
-                new_u_values[maya_uv_id] = float(position[0])
-                new_v_values[maya_uv_id] = float(position[1])
-
-            mesh_fn.setUVs(
-                om.MFloatArray(new_u_values),
-                om.MFloatArray(new_v_values),
-                uv_set
+            positioned_uv_count = apply_maya_uv_positions(
+                mesh_data,
+                desired_position_by_maya_uv_id
             )
 
-            mesh_fn.updateSurface()
+            if positioned_uv_count <= 0:
+                raise RuntimeError(
+                    "[eTrim] Maya accepted no UV position updates for mesh: {}"
+                    .format(
+                        mesh_data.mesh_name
+                    )
+                )
 
             try:
                 cmds.dgdirty(mesh_data.mesh_name)
@@ -1002,7 +1089,8 @@ def apply_preview_to_maya(uv_cache):
             print("[eTrim] Applied preview UVs to mesh:")
             print("        mesh:", mesh_data.mesh_name)
             print("        persistent cut edges:", cut_count)
-            print("        updated Maya UVs:", len(desired_position_by_maya_uv_id))
+            print("        requested Maya UVs:", len(desired_position_by_maya_uv_id))
+            print("        positioned Maya UVs:", positioned_uv_count)
             print("        Maya UV shells:", shell_count)
 
             # Rebuild from Maya's real post-cut UV topology.

@@ -2,6 +2,7 @@
 
 import maya.cmds as cmds
 import maya.mel as mel
+import maya.api.OpenMaya as om
 
 from ET_core import ET_uv_model
 
@@ -84,6 +85,88 @@ def duplicate_mesh_for_unwrap(mesh_name):
 
     return temp_transform
 
+def get_temp_mesh_dag_path(temp_transform):
+    """
+    Resolve the temporary mesh transform to a mesh MDagPath.
+    """
+
+    temp_shape = get_temp_shape(
+        temp_transform
+    )
+
+    if not temp_shape:
+        return None
+
+    selection_list = om.MSelectionList()
+    selection_list.add(temp_shape)
+
+    dag_path = selection_list.getDagPath(0)
+
+    if not dag_path.node().hasFn(om.MFn.kMesh):
+        return None
+
+    return dag_path
+
+def apply_preview_cuts_to_temp_mesh(temp_transform, mesh_data):
+    """
+    Recreate queued preview detach borders on the temporary unwrap mesh.
+
+    The edge IDs remain valid because the temporary mesh is a duplicate of
+    the source mesh and its polygon topology is unchanged.
+    """
+
+    if not temp_transform or not mesh_data:
+        return False
+
+    edge_ids = sorted(
+        set(
+            getattr(
+                mesh_data,
+                "pending_uv_cut_edge_ids",
+                set()
+            )
+        )
+    )
+
+    if not edge_ids:
+        return True
+
+    try:
+        cmds.polyUVSet(
+            temp_transform,
+            currentUVSet=True,
+            uvSet=mesh_data.uv_set
+        )
+    except Exception:
+        pass
+
+    edge_components = [
+        "{}.e[{}]".format(
+            temp_transform,
+            edge_id
+        )
+        for edge_id in edge_ids
+    ]
+
+    try:
+        cmds.polyMapCut(
+            edge_components,
+            constructionHistory=False
+        )
+
+        cmds.refresh(
+            force=True
+        )
+
+        print("[eTrim] Applied preview cuts to temp unwrap mesh:")
+        print("        edges:", len(edge_ids))
+
+        return True
+
+    except Exception as exc:
+        print("[eTrim] Failed to cut temp unwrap mesh:")
+        print(exc)
+        return False
 
 def get_temp_shape(temp_transform):
     shapes = cmds.listRelatives(
@@ -113,68 +196,139 @@ def get_temp_face_component(temp_transform, face_index):
         int(face_index)
     )
 
-
 def apply_preview_uvs_to_temp_mesh(temp_transform, mesh_data):
     """
-    Apply current viewer preview UV positions to temp mesh.
+    Apply preview coordinates to the temporary mesh by polygon corner.
 
-    This only applies UV ids that exist as real UV ids on the temp mesh.
-    Preview-only duplicated UV ids may not exist on temp. That is okay for
-    first version because final readback is face-index based.
+    Preview-only UV IDs do not need to match temp Maya UV IDs. The mapping is
+    resolved through each cached polygon corner after temp UV cuts are applied.
     """
 
     if not temp_transform or not mesh_data:
         return False
 
-    positions = getattr(
-        mesh_data,
-        "preview_uv_positions",
-        None
+    dag_path = get_temp_mesh_dag_path(
+        temp_transform
     )
 
-    if not positions:
-        positions = getattr(
-            mesh_data,
-            "uv_positions",
-            {}
-        )
-
-    if not positions:
+    if not dag_path:
         return False
 
-    applied_count = 0
+    mesh_fn = om.MFnMesh(
+        dag_path
+    )
 
-    for uv_id, uv_pos in positions.items():
-        if not isinstance(uv_id, int):
+    uv_set = mesh_data.uv_set
+
+    try:
+        mesh_fn.setCurrentUVSetName(
+            uv_set
+        )
+    except Exception:
+        pass
+
+    u_array, v_array = mesh_fn.getUVs(
+        uv_set
+    )
+
+    new_u_values = [
+        float(value)
+        for value in u_array
+    ]
+
+    new_v_values = [
+        float(value)
+        for value in v_array
+    ]
+
+    desired_by_temp_uv_id = {}
+    conflicting_uv_ids = set()
+
+    for local_face_index, polygon_id in enumerate(mesh_data.face_polygon_ids):
+        if local_face_index >= len(mesh_data.faces):
             continue
 
-        u, v = uv_pos
-
-        uv_component = get_temp_uv_component(
-            temp_transform,
-            uv_id
+        preview_face_uv_ids = mesh_data.faces[local_face_index]
+        vertex_count = mesh_fn.polygonVertexCount(
+            polygon_id
         )
 
-        if not cmds.objExists(uv_component):
+        if vertex_count != len(preview_face_uv_ids):
             continue
 
-        try:
-            cmds.polyEditUV(
-                uv_component,
-                u=float(u),
-                v=float(v),
-                relative=False
+        for local_vertex_id in range(vertex_count):
+            preview_uv_id = preview_face_uv_ids[local_vertex_id]
+
+            if preview_uv_id not in mesh_data.preview_uv_positions:
+                continue
+
+            temp_uv_id = ET_uv_model.get_polygon_uv_id(
+                mesh_fn,
+                polygon_id,
+                local_vertex_id,
+                uv_set
             )
 
-            applied_count += 1
+            temp_uv_id = int(
+                temp_uv_id
+            )
 
-        except Exception:
-            pass
+            position = mesh_data.preview_uv_positions[
+                preview_uv_id
+            ]
 
-    print("[eTrim] Applied preview UVs to temp mesh:", applied_count)
+            desired_position = (
+                float(position[0]),
+                float(position[1])
+            )
 
-    return applied_count > 0
+            if temp_uv_id in desired_by_temp_uv_id:
+                previous_position = desired_by_temp_uv_id[temp_uv_id]
 
+                du = abs(
+                    previous_position[0] - desired_position[0]
+                )
+
+                dv = abs(
+                    previous_position[1] - desired_position[1]
+                )
+
+                if du > 0.000001 or dv > 0.000001:
+                    conflicting_uv_ids.add(
+                        temp_uv_id
+                    )
+            else:
+                desired_by_temp_uv_id[temp_uv_id] = desired_position
+
+    if conflicting_uv_ids:
+        print("[eTrim] Temp UV isolation is incomplete.")
+        print("        conflicting UV ids:", sorted(conflicting_uv_ids))
+        return False
+
+    for temp_uv_id, position in desired_by_temp_uv_id.items():
+        if temp_uv_id < 0:
+            continue
+
+        if temp_uv_id >= len(new_u_values):
+            continue
+
+        new_u_values[temp_uv_id] = position[0]
+        new_v_values[temp_uv_id] = position[1]
+
+    mesh_fn.setUVs(
+        om.MFloatArray(new_u_values),
+        om.MFloatArray(new_v_values),
+        uv_set
+    )
+
+    mesh_fn.updateSurface()
+
+    print("[eTrim] Applied preview UVs to temp mesh:")
+    print("        UVs:", len(desired_by_temp_uv_id))
+
+    return bool(
+        desired_by_temp_uv_id
+    )
 
 def get_selected_face_indices_from_keys(selected_keys, mesh_data):
     """
@@ -406,14 +560,58 @@ def get_face_indices_for_unwrap(viewer, mesh_data):
 
     return list(range(len(mesh_data.faces)))
 
-def select_temp_faces(temp_transform, face_indices):
-    components = [
-        get_temp_face_component(
-            temp_transform,
-            face_index
+def prepare_faces_for_unwrap(mesh_data, face_indices):
+    """
+    Detach a partial face selection in preview before temporary unwrap.
+
+    The selected faces remain connected to each other, while UVs shared with
+    surrounding unselected faces are duplicated.
+
+    Returns:
+        True if preparation succeeded.
+    """
+
+    if not mesh_data or not face_indices:
+        return False
+
+    result = ET_uv_model.split_faces_to_preview_shell(
+        mesh_data,
+        face_indices,
+        duplicate_all=False
+    )
+
+    if result:
+        print("[eTrim] Prepared selected faces for isolated unwrap:")
+        print("        mesh:", mesh_data.mesh_name)
+        print("        faces:", len(face_indices))
+
+    return result
+
+def select_temp_faces(temp_transform, mesh_data, face_indices):
+    """
+    Select temp mesh faces using Maya polygon IDs.
+
+    face_indices contains local mesh_data.faces indices, not necessarily
+    Maya polygon IDs.
+    """
+
+    components = []
+
+    for face_index in face_indices:
+        if face_index < 0:
+            continue
+
+        if face_index >= len(mesh_data.face_polygon_ids):
+            continue
+
+        polygon_id = mesh_data.face_polygon_ids[face_index]
+
+        components.append(
+            get_temp_face_component(
+                temp_transform,
+                polygon_id
+            )
         )
-        for face_index in face_indices
-    ]
 
     if not components:
         return False
@@ -424,7 +622,6 @@ def select_temp_faces(temp_transform, face_indices):
     )
 
     return True
-
 
 def ensure_unfold3d_plugin_loaded():
     """
@@ -506,64 +703,105 @@ def run_native_unwrap(iterations=1, pack=False):
 
     return False
 
-
-def get_uv_values_for_temp_face_vertices(temp_transform, face_index):
+def get_uv_values_for_temp_face_vertices(
+    temp_transform,
+    polygon_id,
+    uv_set
+):
     """
-    Return UV coordinates for each face vertex of a temp mesh face.
+    Return temporary UV coordinates in polygon-corner order.
 
-    Returns:
-        [(u, v), ...]
+    This avoids relying on polyListComponentConversion ordering, which may not
+    match the order of UV ids stored in mesh_data.faces.
     """
 
-    face_component = get_temp_face_component(
-        temp_transform,
-        face_index
+    dag_path = get_temp_mesh_dag_path(
+        temp_transform
     )
 
-    uv_components = cmds.polyListComponentConversion(
-        face_component,
-        fromFace=True,
-        toUV=True
-    ) or []
+    if not dag_path:
+        return []
 
-    uv_components = cmds.filterExpand(
-        uv_components,
-        selectionMask=35,
-        expand=True
-    ) or []
+    mesh_fn = om.MFnMesh(
+        dag_path
+    )
+
+    try:
+        u_array, v_array = mesh_fn.getUVs(
+            uv_set
+        )
+    except Exception as exc:
+        print("[eTrim] Could not read temp mesh UVs:")
+        print(exc)
+        return []
+
+    try:
+        vertex_count = mesh_fn.polygonVertexCount(
+            int(polygon_id)
+        )
+    except Exception as exc:
+        print("[eTrim] Could not read temp polygon:")
+        print("        polygon:", polygon_id)
+        print(exc)
+        return []
 
     result = []
 
-    for uv_component in uv_components:
+    for local_vertex_id in range(vertex_count):
         try:
-            values = cmds.polyEditUV(
-                uv_component,
-                query=True
+            uv_id = ET_uv_model.get_polygon_uv_id(
+                mesh_fn,
+                int(polygon_id),
+                local_vertex_id,
+                uv_set
             )
 
-            if values and len(values) >= 2:
-                result.append(
-                    (
-                        float(values[0]),
-                        float(values[1])
-                    )
-                )
-        except Exception:
-            pass
+            uv_id = int(
+                uv_id
+            )
+
+        except Exception as exc:
+            print("[eTrim] Could not resolve temp polygon UV:")
+            print("        polygon:", polygon_id)
+            print("        local vertex:", local_vertex_id)
+            print(exc)
+            return []
+
+        if uv_id < 0:
+            return []
+
+        if uv_id >= len(u_array):
+            print("[eTrim] Temp UV id is outside UV array:")
+            print("        polygon:", polygon_id)
+            print("        uv id:", uv_id)
+            print("        UV count:", len(u_array))
+            return []
+
+        result.append(
+            (
+                float(u_array[uv_id]),
+                float(v_array[uv_id])
+            )
+        )
 
     return result
 
-
-def write_temp_unwrap_result_to_preview(temp_transform, mesh_data, face_indices):
+def write_temp_unwrap_result_to_preview(
+    temp_transform,
+    mesh_data,
+    face_indices
+):
     """
-    Read temp unwrapped UVs and write them into mesh_data.preview_uv_positions.
+    Read temp unwrapped UVs and write them into preview UV positions.
 
-    This writes by face index and face UV order. That means it can write into
-    preview UV ids even if those ids are preview-only split ids.
+    Readback is performed in polygon-corner order and maps directly onto the
+    preview UV IDs stored in mesh_data.faces.
     """
 
     if not hasattr(mesh_data, "preview_uv_positions"):
-        mesh_data.preview_uv_positions = dict(mesh_data.uv_positions)
+        mesh_data.preview_uv_positions = dict(
+            mesh_data.uv_positions
+        )
 
     written_count = 0
 
@@ -574,34 +812,44 @@ def write_temp_unwrap_result_to_preview(temp_transform, mesh_data, face_indices)
         if face_index >= len(mesh_data.faces):
             continue
 
+        if face_index >= len(mesh_data.face_polygon_ids):
+            continue
+
         preview_face_uv_ids = mesh_data.faces[face_index]
+        polygon_id = mesh_data.face_polygon_ids[face_index]
 
         temp_uv_values = get_uv_values_for_temp_face_vertices(
             temp_transform,
-            face_index
+            polygon_id,
+            mesh_data.uv_set
         )
 
         if not temp_uv_values:
             continue
 
-        count = min(
-            len(preview_face_uv_ids),
-            len(temp_uv_values)
-        )
+        if len(preview_face_uv_ids) != len(temp_uv_values):
+            print("[eTrim] Temp unwrap corner-count mismatch:")
+            print("        face index:", face_index)
+            print("        polygon id:", polygon_id)
+            continue
 
-        for local_index in range(count):
-            preview_uv_id = preview_face_uv_ids[local_index]
-            mesh_data.preview_uv_positions[preview_uv_id] = temp_uv_values[local_index]
+        for local_index, preview_uv_id in enumerate(preview_face_uv_ids):
+            mesh_data.preview_uv_positions[preview_uv_id] = (
+                temp_uv_values[local_index]
+            )
+
             written_count += 1
 
     print("[eTrim] Unwrap result written to preview UVs:", written_count)
 
     return written_count > 0
 
-
 def unwrap_mesh_data_to_preview(viewer, mesh_data, iterations=1, pack=False):
     """
-    Unwrap selected faces/shells for one mesh_data into preview cache.
+    Unwrap selected faces or shells into preview UVs.
+
+    Partial face regions are detached in preview and recreated as UV cuts on
+    the temporary mesh before Maya Unfold runs.
     """
 
     if not viewer or not mesh_data:
@@ -612,16 +860,20 @@ def unwrap_mesh_data_to_preview(viewer, mesh_data, iterations=1, pack=False):
         mesh_data
     )
 
-    if viewer.get_uv_selection_mode() == "vertex" and face_indices:
-        ET_uv_model.split_faces_to_preview_shell(
-            mesh_data,
-            face_indices
-        )
-
-
     if not face_indices:
         print("[eTrim] No faces found for unwrap:", mesh_data.mesh_name)
         return False
+
+    uv_mode = viewer.get_uv_selection_mode()
+
+    if uv_mode in (
+        "face",
+        "vertex"
+    ):
+        prepare_faces_for_unwrap(
+            mesh_data,
+            face_indices
+        )
 
     temp_transform = duplicate_mesh_for_unwrap(
         mesh_data.mesh_name
@@ -631,13 +883,25 @@ def unwrap_mesh_data_to_preview(viewer, mesh_data, iterations=1, pack=False):
         return False
 
     try:
-        apply_preview_uvs_to_temp_mesh(
+        # The temp mesh must have the same shell boundaries as the preview
+        # before preview positions are mapped onto temp Maya UV IDs.
+        if not apply_preview_cuts_to_temp_mesh(
             temp_transform,
             mesh_data
-        )
+        ):
+            print("[eTrim] Could not isolate temp faces for unwrap.")
+            return False
+
+        if not apply_preview_uvs_to_temp_mesh(
+            temp_transform,
+            mesh_data
+        ):
+            print("[eTrim] Could not apply preview UVs to temp mesh.")
+            return False
 
         if not select_temp_faces(
             temp_transform,
+            mesh_data,
             face_indices
         ):
             print("[eTrim] Could not select temp faces for unwrap.")
@@ -656,8 +920,9 @@ def unwrap_mesh_data_to_preview(viewer, mesh_data, iterations=1, pack=False):
         )
 
     finally:
-        safe_delete(temp_transform)
-
+        safe_delete(
+            temp_transform
+        )
 
 def unwrap_viewer_selection_to_preview(viewer, iterations=1, pack=False):
     """

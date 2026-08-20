@@ -864,6 +864,43 @@ class ETrimViewer(QtWidgets.QWidget):
             self.setCursor(QtCore.Qt.ClosedHandCursor)
             return
 
+        # Right-click priority:
+        #   1. boxes
+        #   2. already-selected UV drawable
+        #   3. empty viewer menu
+        #
+        # Unselected UV shells, faces, and vertices are ignored.
+        if event.button() == QtCore.Qt.RightButton:
+            if self.box_selection_enabled and self.box_drawer:
+                if self.box_drawer.mouse_press_event(event):
+                    event.accept()
+                    return
+
+            if self.uv_selection_enabled and self.uv_drawer:
+                uv_ref = self.uv_drawer.hit_test_current_mode(
+                    pos
+                )
+
+                if uv_ref:
+                    uv_mode = self.uv_drawer.selection_mode
+
+                    drawable_key = self.uv_drawer.drawable_key_for_ref(
+                        uv_mode,
+                        uv_ref
+                    )
+
+                    if (
+                        drawable_key and
+                        self.is_drawable_selected(drawable_key)
+                    ):
+                        if self.uv_drawer.mouse_press_event(event):
+                            event.accept()
+                            return
+
+            self.show_empty_context_menu(event)
+            event.accept()
+            return
+
         # Box handles first, so resizing boxes is still possible.
         if self.box_selection_enabled:
             if self.is_box_handle_under_mouse(pos):
@@ -871,6 +908,7 @@ class ETrimViewer(QtWidgets.QWidget):
                     if event.button() == QtCore.Qt.LeftButton:
                         if self.uv_drawer and hasattr(self.uv_drawer, "deselect"):
                             self.uv_drawer.deselect()
+
                     return
 
         # UVs / shells / faces are the main interaction target.
@@ -890,10 +928,12 @@ class ETrimViewer(QtWidgets.QWidget):
                 if event.button() == QtCore.Qt.LeftButton:
                     if self.uv_drawer and hasattr(self.uv_drawer, "deselect"):
                         self.uv_drawer.deselect()
+
                 return
 
         # Empty click may clear selection.
-        # Empty click-drag starts rectangle selection only after a small movement threshold.
+        # Empty click-drag starts rectangle selection only after a small
+        # movement threshold.
         if event.button() == QtCore.Qt.LeftButton:
             can_rect_select = (
                 self.box_selection_enabled or
@@ -909,14 +949,12 @@ class ETrimViewer(QtWidgets.QWidget):
                     additive=self.is_shift_modifier(event),
                     subtractive=self.is_ctrl_modifier(event)
                 )
+
                 return
 
             self.deselect_drawables()
             return
-        
-        if event.button() == QtCore.Qt.RightButton:
-            self.show_empty_context_menu(event)
-            return
+
         super(ETrimViewer, self).mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
