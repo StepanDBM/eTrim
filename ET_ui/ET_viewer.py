@@ -191,7 +191,7 @@ class ETrimViewer(QtWidgets.QWidget):
             self.backdrop_image_enabled = False
             self.update()
             return False
-
+        """
         transform = QtGui.QTransform()
         transform.rotate(180.0)
 
@@ -199,7 +199,7 @@ class ETrimViewer(QtWidgets.QWidget):
             transform,
             QtCore.Qt.SmoothTransformation
         )
-
+        """
         if image.isNull():
             print("[eTrim] Could not rotate backdrop image:", image_path)
             self.backdrop_image_path = None
