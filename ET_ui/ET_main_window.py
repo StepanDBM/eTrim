@@ -164,67 +164,64 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
             tooltip="Frame the 0-1 UV tile."
         )
 
-        self.backdrop_image_btn = ET_style.create_toggle_button("BG Image",
-            tooltip="Show or hide base color texture behind the UVs."
-        )
+        # Right side: compact storage combo.
+        self.save_load_combo = QtWidgets.QComboBox()
+        self.save_load_combo.addItem("Save/Load")
+        self.save_load_combo.addItem("Save .etrim")
+        self.save_load_combo.addItem("Load .etrim")
+        self.save_load_combo.addItem("Save To Scene")
+        self.save_load_combo.addItem("Load From Scene")
 
-        self.backdrop_source_mode_btn = ET_style.create_toggle_button("Shader",
-            checked=False, tooltip="Switch backdrop source between shader texture and chosen image file."
+        self.save_load_combo.setCurrentIndex(0)
+        self.save_load_combo.setMinimumWidth(110)
+        self.save_load_combo.setMinimumHeight(24)
+        self.save_load_combo.setStyleSheet(ET_style.DIALOG_STYLE)
+        self.save_load_combo.setToolTip(
+            "Save or load an eTrim layout from a file or the Maya scene."
         )
-
-        self.choose_backdrop_image_btn = ET_style.create_action_button("Choose Img",
-            tooltip="Choose an image file to use as the UV backdrop. This overrides the shader texture."
-        )
-
-        self.backdrop_opacity_spin = QtWidgets.QSpinBox()
-        self.backdrop_opacity_spin.setRange(0, 100)
-        self.backdrop_opacity_spin.setValue(30)
-        self.backdrop_opacity_spin.setSuffix(" %")
-        self.backdrop_opacity_spin.setMinimumWidth(72)
-        self.backdrop_opacity_spin.setMinimumHeight(24)
-        self.backdrop_opacity_spin.setStyleSheet(ET_style.DIALOG_STYLE)
-        self.backdrop_opacity_spin.setToolTip("Backdrop image opacity.")
 
         toolbar_layout.addWidget(self.load_selection_btn)
         toolbar_layout.addWidget(self.apply_btn)
-
-
         toolbar_layout.addWidget(self.create_box_btn)
         toolbar_layout.addWidget(self.delete_box_btn)
         toolbar_layout.addWidget(self.clear_boxes_btn)
-
         toolbar_layout.addWidget(self.frame_btn)
 
-        # Push backdrop controls to the right side of the top toolbar.
+        # Push Save/Load to the right.
         toolbar_layout.addStretch()
 
-        toolbar_layout.addWidget(self.backdrop_image_btn)
-        toolbar_layout.addWidget(self.backdrop_source_mode_btn)
-        toolbar_layout.addWidget(self.choose_backdrop_image_btn)
-        toolbar_layout.addWidget(self.backdrop_opacity_spin)
+        toolbar_layout.addWidget(self.save_load_combo)
 
         main_layout.addLayout(toolbar_layout)
 
         # -----------------------------------------------------
-        # Tool / storage toolbar
+        # Selection / backdrop toolbar
         # -----------------------------------------------------
         selection_toolbar_layout = ET_style.create_compact_toolbar_layout()
 
-        # Left side: interaction toggles
-        self.enable_uv_selection_btn = ET_style.create_toggle_button("UV Sel: ON",
-            checked=True, tooltip="Enable or disable UV picking and UV interaction.")
+        # Left side: interaction toggles.
+        self.enable_uv_selection_btn = ET_style.create_toggle_button("UV: ON",
+            checked=True,
+            tooltip="Enable or disable UV picking and UV interaction."
+        )
 
-        self.enable_box_selection_btn = ET_style.create_toggle_button("Box Sel: ON",
-            checked=True, tooltip="Enable or disable box picking and box interaction.")
+        self.enable_box_selection_btn = ET_style.create_toggle_button("Box: ON",
+            checked=True,
+            tooltip="Enable or disable box picking and box interaction."
+        )
 
         self.uv_mode_shell_btn = ET_style.create_small_toggle_button("S",
-            checked=True, tooltip="Shell selection mode.")
+            checked=True,
+            tooltip="Shell selection mode."
+        )
 
         self.uv_mode_face_btn = ET_style.create_small_toggle_button("F",
-            tooltip="Face selection mode.")
+            tooltip="Face selection mode."
+        )
 
         self.uv_mode_vertex_btn = ET_style.create_small_toggle_button("V",
-            tooltip="Vertex selection mode.")
+            tooltip="Vertex selection mode."
+        )
 
         self.uv_mode_group = QtWidgets.QButtonGroup(self)
         self.uv_mode_group.setExclusive(True)
@@ -245,26 +242,36 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         selection_toolbar_layout.addWidget(self.enable_box_selection_btn)
         selection_toolbar_layout.addLayout(uv_mode_layout)
 
-        # Spacer pushes save/load buttons to the right side.
+        # Push backdrop controls to the right.
         selection_toolbar_layout.addStretch()
 
-        # Right side: storage buttons
-        self.save_layout_btn = ET_style.create_action_button("Save .etrim",
-            tooltip="Save current eTrim layout to a .etrim file.")
+        # Right side: backdrop controls.
+        self.backdrop_image_btn = ET_style.create_toggle_button("BG Image",
+            tooltip="Show or hide the active backdrop image."
+        )
 
-        self.load_layout_btn = ET_style.create_action_button("Load .etrim",
-            tooltip="Load an eTrim layout from a .etrim file.")
+        self.backdrop_source_mode_btn = ET_style.create_toggle_button("Shader",
+            checked=False,
+            tooltip="Switch between the shader texture and the selected image file."
+        )
 
-        self.save_scene_layout_btn = ET_style.create_action_button("Save To Scene",
-            tooltip="Save current eTrim layout into the Maya scene.")
+        self.choose_backdrop_image_btn = ET_style.create_action_button("Choose Img",
+            tooltip="Choose an image file to use as the UV backdrop."
+        )
 
-        self.load_scene_layout_btn = ET_style.create_action_button("Load From Scene",
-            tooltip="Load eTrim layout from the Maya scene.")
+        self.backdrop_opacity_spin = QtWidgets.QSpinBox()
+        self.backdrop_opacity_spin.setRange(0, 100)
+        self.backdrop_opacity_spin.setValue(30)
+        self.backdrop_opacity_spin.setSuffix(" %")
+        self.backdrop_opacity_spin.setMinimumWidth(72)
+        self.backdrop_opacity_spin.setMinimumHeight(24)
+        self.backdrop_opacity_spin.setStyleSheet(ET_style.DIALOG_STYLE)
+        self.backdrop_opacity_spin.setToolTip("Backdrop image opacity.")
 
-        selection_toolbar_layout.addWidget(self.save_layout_btn)
-        selection_toolbar_layout.addWidget(self.load_layout_btn)
-        selection_toolbar_layout.addWidget(self.save_scene_layout_btn)
-        selection_toolbar_layout.addWidget(self.load_scene_layout_btn)
+        selection_toolbar_layout.addWidget(self.backdrop_image_btn)
+        selection_toolbar_layout.addWidget(self.backdrop_source_mode_btn)
+        selection_toolbar_layout.addWidget(self.choose_backdrop_image_btn)
+        selection_toolbar_layout.addWidget(self.backdrop_opacity_spin)
 
         main_layout.addLayout(selection_toolbar_layout)
 
@@ -285,33 +292,29 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
 
     def create_connections(self):
         self.load_selection_btn.clicked.connect(self.load_selected_uvs)
-
-        self.uv_mode_shell_btn.clicked.connect(lambda: self.set_uv_select_mode("shell"))
-        self.uv_mode_face_btn.clicked.connect(lambda: self.set_uv_select_mode("face"))
-        self.uv_mode_vertex_btn.clicked.connect(lambda: self.set_uv_select_mode("vertex"))
-        
-        self.backdrop_image_btn.clicked.connect(self.toggle_backdrop_image)
-        self.backdrop_source_mode_btn.clicked.connect(self.toggle_backdrop_source_mode)
-        self.choose_backdrop_image_btn.clicked.connect(self.choose_backdrop_image_file)
-        self.backdrop_opacity_spin.valueChanged.connect(self.set_backdrop_opacity)
-
         self.apply_btn.clicked.connect(self.apply_preview)
-
-        self.save_layout_btn.clicked.connect(self.save_layout_file)
-        self.load_layout_btn.clicked.connect(self.load_layout_file)
-        self.save_scene_layout_btn.clicked.connect(self.save_layout_to_scene)
-        self.load_scene_layout_btn.clicked.connect(self.load_layout_from_scene)
 
         self.create_box_btn.clicked.connect(self.create_box)
         self.delete_box_btn.clicked.connect(self.delete_box)
         self.clear_boxes_btn.clicked.connect(self.clear_boxes)
         self.frame_btn.clicked.connect(self.frame_view)
-        self.viewer.boxesChanged.connect(self.refresh_info)
 
-        self.viewer.activeBoxChanged.connect(self.on_active_box_changed)
+        self.save_load_combo.activated.connect(self.on_save_load_combo_activated)
+
+        self.uv_mode_shell_btn.clicked.connect(lambda: self.set_uv_select_mode("shell"))
+        self.uv_mode_face_btn.clicked.connect(lambda: self.set_uv_select_mode("face"))
+        self.uv_mode_vertex_btn.clicked.connect(lambda: self.set_uv_select_mode("vertex"))
 
         self.enable_uv_selection_btn.clicked.connect(self.toggle_uv_selection_enabled)
         self.enable_box_selection_btn.clicked.connect(self.toggle_box_selection_enabled)
+
+        self.backdrop_image_btn.clicked.connect(self.toggle_backdrop_image)
+        self.backdrop_source_mode_btn.clicked.connect(self.toggle_backdrop_source_mode)
+        self.choose_backdrop_image_btn.clicked.connect(self.choose_backdrop_image_file)
+        self.backdrop_opacity_spin.valueChanged.connect(self.set_backdrop_opacity)
+
+        self.viewer.boxesChanged.connect(self.refresh_info)
+        self.viewer.activeBoxChanged.connect(self.on_active_box_changed)
 
     # -----------------------------------------------------
     # Actions
@@ -362,18 +365,14 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
 
         if source_mode == "shader":
             if not self.viewer.backdrop_shader_image_path:
-                result = self.try_load_backdrop_image_from_cache(
-                    self.viewer.uv_cache
-                )
+                result = self.try_load_backdrop_image_from_cache(self.viewer.uv_cache)
 
                 if not result:
                     self.backdrop_image_btn.setChecked(False)
                     self.viewer.set_backdrop_enabled(False)
                     return
 
-            self.viewer.set_backdrop_source_mode(
-                "shader"
-            )
+            self.viewer.set_backdrop_source_mode("shader")
 
             self.viewer.set_backdrop_enabled(True)
             return
@@ -412,9 +411,7 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         if not file_path:
             return False
 
-        result = self.viewer.set_file_backdrop_image_path(
-            file_path
-        )
+        result = self.viewer.set_file_backdrop_image_path(file_path)
 
         if not result:
             return False
@@ -452,16 +449,12 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
                 if not result:
                     self.backdrop_source_mode_btn.setChecked(False)
                     self.backdrop_source_mode_btn.setText("Shader")
-                    self.viewer.set_backdrop_source_mode(
-                        "shader"
-                    )
+                    self.viewer.set_backdrop_source_mode("shader")
                     return
 
                 return
 
-            result = self.viewer.set_backdrop_source_mode(
-                "file"
-            )
+            result = self.viewer.set_backdrop_source_mode("file")
 
             if result:
                 self.backdrop_image_btn.setChecked(True)
@@ -472,13 +465,9 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         self.backdrop_source_mode_btn.setText("Shader")
 
         if not self.viewer.backdrop_shader_image_path:
-            self.try_load_backdrop_image_from_cache(
-                self.viewer.uv_cache
-            )
+            self.try_load_backdrop_image_from_cache(self.viewer.uv_cache)
 
-        result = self.viewer.set_backdrop_source_mode(
-            "shader"
-        )
+        result = self.viewer.set_backdrop_source_mode("shader")
 
         if result:
             self.backdrop_image_btn.setChecked(True)
@@ -535,11 +524,7 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         Set UV interaction mode from the S/F/V button group.
         """
 
-        if mode not in (
-            "shell",
-            "face",
-            "vertex"
-        ):
+        if mode not in ("shell", "face", "vertex"):
             return
 
         if not self.viewer:
@@ -548,9 +533,7 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         if not self.viewer.uv_drawer:
             return
 
-        self.viewer.uv_drawer.set_selection_mode(
-            mode
-        )
+        self.viewer.uv_drawer.set_selection_mode(mode)
 
         self.sync_uv_mode_buttons()
 
@@ -565,9 +548,7 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
             print("[eTrim] No loaded UV cache to apply.")
             return
 
-        result = ET_uv_model.apply_preview_to_maya(
-            self.viewer.uv_cache
-        )
+        result = ET_uv_model.apply_preview_to_maya(self.viewer.uv_cache)
 
         if result:
             print("[eTrim] Apply complete.")
@@ -581,17 +562,9 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
 
         uv_mode = self.viewer.get_uv_selection_mode()
 
-        self.uv_mode_shell_btn.setChecked(
-            uv_mode == "shell"
-        )
-
-        self.uv_mode_face_btn.setChecked(
-            uv_mode == "face"
-        )
-
-        self.uv_mode_vertex_btn.setChecked(
-            uv_mode == "vertex"
-        )
+        self.uv_mode_shell_btn.setChecked(uv_mode == "shell")
+        self.uv_mode_face_btn.setChecked(uv_mode == "face")
+        self.uv_mode_vertex_btn.setChecked(uv_mode == "vertex")
 
     def sync_ui_from_viewer_state(self):
         """
@@ -614,9 +587,9 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         self.enable_uv_selection_btn.setChecked(uv_enabled)
 
         if uv_enabled:
-            self.enable_uv_selection_btn.setText("UV Selection: ON")
+            self.enable_uv_selection_btn.setText("UV: ON")
         else:
-            self.enable_uv_selection_btn.setText("UV Selection: OFF")
+            self.enable_uv_selection_btn.setText("UV: OFF")
 
         box_enabled = bool(
             getattr(
@@ -629,9 +602,9 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         self.enable_box_selection_btn.setChecked(box_enabled)
 
         if box_enabled:
-            self.enable_box_selection_btn.setText("Box Sel: ON")
+            self.enable_box_selection_btn.setText("Box: ON")
         else:
-            self.enable_box_selection_btn.setText("Box Sel: OFF")
+            self.enable_box_selection_btn.setText("Box: OFF")
 
         self.sync_uv_mode_buttons()
 
@@ -760,6 +733,33 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
 
     def frame_view(self):
         self.viewer.frame_01()
+
+    def on_save_load_combo_activated(self, index):
+        """
+        Execute the selected storage operation, then restore the permanent
+        Save/Load label.
+        """
+
+        try:
+            index = int(index)
+        except (TypeError, ValueError):
+            index = self.save_load_combo.currentIndex()
+
+        try:
+            if index == 1:
+                self.save_layout_file()
+
+            elif index == 2:
+                self.load_layout_file()
+
+            elif index == 3:
+                self.save_layout_to_scene()
+
+            elif index == 4:
+                self.load_layout_from_scene()
+
+        finally:
+            self.save_load_combo.setCurrentIndex(0)
 
     def on_active_box_changed(self, box_id):
         self.refresh_info()
