@@ -829,7 +829,7 @@ class EGridifyHeuristicSession(object):
 
         changed = False
         consecutive_failed_passes = 0
-        max_consecutive_failed_passes = 10
+        max_consecutive_failed_passes = 3
 
         self.refresh_viewer()
 
@@ -924,7 +924,7 @@ class EGridifyHeuristicSession(object):
 
                 break
             if consecutive_failed_passes >= max_consecutive_failed_passes:
-                stop_message = "stopped: 10 failed passes in a row"
+                stop_message = "stopped: 3 failed passes in a row"
 
                 self.update_overlay(
                     iteration=pass_index,

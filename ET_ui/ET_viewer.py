@@ -170,7 +170,9 @@ class ETrimViewer(QtWidgets.QWidget):
     def load_backdrop_image_path(self, image_path):
         """
         Low-level backdrop image loader.
-        Does not decide whether image came from shader or file.
+
+        Every loaded backdrop is rotated 180 degrees before display.
+        This applies to both shader and manually selected images.
         """
 
         if not image_path:
@@ -190,6 +192,22 @@ class ETrimViewer(QtWidgets.QWidget):
             self.update()
             return False
 
+        transform = QtGui.QTransform()
+        transform.rotate(180.0)
+
+        image = image.transformed(
+            transform,
+            QtCore.Qt.SmoothTransformation
+        )
+
+        if image.isNull():
+            print("[eTrim] Could not rotate backdrop image:", image_path)
+            self.backdrop_image_path = None
+            self.backdrop_image = QtGui.QImage()
+            self.backdrop_image_enabled = False
+            self.update()
+            return False
+
         self.backdrop_image_path = image_path
         self.backdrop_image = image
         self.backdrop_image_enabled = True
@@ -198,6 +216,7 @@ class ETrimViewer(QtWidgets.QWidget):
         print("[eTrim] Backdrop image loaded:")
         print("    source:", self.backdrop_source_mode)
         print("    path:", image_path)
+        print("    rotation: 180 degrees")
 
         return True
 
@@ -208,9 +227,7 @@ class ETrimViewer(QtWidgets.QWidget):
         Existing calls are treated as shader texture assignments.
         """
 
-        return self.set_shader_backdrop_image_path(
-            image_path
-        )
+        return self.set_shader_backdrop_image_path(image_path)
 
     def set_shader_backdrop_image_path(self, image_path):
         """
@@ -225,9 +242,7 @@ class ETrimViewer(QtWidgets.QWidget):
         if self.backdrop_source_mode != "shader":
             return True
 
-        return self.load_backdrop_image_path(
-            image_path
-        )
+        return self.load_backdrop_image_path(image_path)
 
     def set_file_backdrop_image_path(self, image_path):
         """
@@ -239,9 +254,7 @@ class ETrimViewer(QtWidgets.QWidget):
         self.backdrop_file_image_path = image_path
         self.backdrop_source_mode = "file"
 
-        return self.load_backdrop_image_path(
-            image_path
-        )
+        return self.load_backdrop_image_path(image_path)
 
     def set_backdrop_source_mode(self, mode):
         """
@@ -261,13 +274,8 @@ class ETrimViewer(QtWidgets.QWidget):
         self.backdrop_source_mode = mode
 
         if mode == "shader":
-            return self.load_backdrop_image_path(
-                self.backdrop_shader_image_path
-            )
-
-        return self.load_backdrop_image_path(
-            self.backdrop_file_image_path
-        )
+            return self.load_backdrop_image_path(self.backdrop_shader_image_path)
+        return self.load_backdrop_image_path(self.backdrop_file_image_path)
 
     def get_backdrop_source_mode(self):
         return self.backdrop_source_mode
@@ -278,13 +286,7 @@ class ETrimViewer(QtWidgets.QWidget):
 
 
     def set_backdrop_opacity_percent(self, value):
-        value = max(
-            0.0,
-            min(
-                100.0,
-                float(value)
-            )
-        )
+        value = max(0.0, min(100.0, float(value)))
 
         self.backdrop_opacity = value / 100.0
         self.update()

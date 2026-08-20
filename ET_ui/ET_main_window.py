@@ -341,7 +341,7 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         if result:
             self.backdrop_image_btn.setChecked(True)
             self.backdrop_image_btn.setText("Backdrop Image")
-            self.viewer.set_backdrop_opacity_percent(100)
+            self.viewer.set_backdrop_opacity_percent(30)
 
         return result
 
@@ -505,7 +505,7 @@ class ETrimMainWindow(MayaQWidgetDockableMixin, QtWidgets.QDialog):
         if result and self.viewer.get_backdrop_source_mode() == "shader":
             self.backdrop_image_btn.setChecked(True)
             self.viewer.set_backdrop_enabled(True)
-            self.viewer.set_backdrop_opacity_percent(100)
+            self.viewer.set_backdrop_opacity_percent(30)
 
         return result
 
