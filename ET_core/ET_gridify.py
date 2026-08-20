@@ -282,15 +282,10 @@ def vector_distance(a, b):
 
 
 def vector_normalize(a):
-    length = vector_length(
-        a
-    )
+    length = vector_length(a)
 
     if length <= EPSILON:
-        return (
-            0.0,
-            0.0
-        )
+        return (0.0, 0.0)
 
     return (
         float(a[0]) / length,
@@ -320,13 +315,8 @@ def vector_cross_2d(a, b):
 
 
 def rotate_vector(vector, radians_value):
-    cos_value = math.cos(
-        radians_value
-    )
-
-    sin_value = math.sin(
-        radians_value
-    )
+    cos_value = math.cos(radians_value)
+    sin_value = math.sin(radians_value)
 
     x, y = vector
 
@@ -351,10 +341,8 @@ def compute_bounds(points):
     ]
 
     return (
-        min(u_values),
-        min(v_values),
-        max(u_values),
-        max(v_values)
+        min(u_values), min(v_values),
+        max(u_values), max(v_values)
     )
 
 
@@ -366,21 +354,10 @@ def get_polygon_area_from_positions(mesh_data, face_uv_ids):
     count = len(face_uv_ids)
 
     for index, uv_a in enumerate(face_uv_ids):
-        uv_b = face_uv_ids[
-            (
-                index + 1
-            ) % count
-        ]
+        uv_b = face_uv_ids[(index + 1) % count]
 
-        pos_a = get_uv_position(
-            mesh_data,
-            uv_a
-        )
-
-        pos_b = get_uv_position(
-            mesh_data,
-            uv_b
-        )
+        pos_a = get_uv_position(mesh_data, uv_a)
+        pos_b = get_uv_position(mesh_data, uv_b)
 
         area += (
             pos_a[0] * pos_b[1] -
@@ -389,6 +366,128 @@ def get_polygon_area_from_positions(mesh_data, face_uv_ids):
 
     return abs(area) * 0.5
 
+def get_polygon_area_from_position_map(face_uv_ids, positions):
+    """
+    Compute polygon area from an explicit UV position dictionary.
+    """
+
+    if len(face_uv_ids) < 3:
+        return 0.0
+
+    for uv_id in face_uv_ids:
+        if uv_id not in positions:
+            return 0.0
+
+    area = 0.0
+    count = len(face_uv_ids)
+
+    for index, uv_a in enumerate(face_uv_ids):
+        uv_b = face_uv_ids[(index + 1) % count]
+
+        pos_a = positions[uv_a]
+        pos_b = positions[uv_b]
+
+        area += (
+            pos_a[0] * pos_b[1] -
+            pos_b[0] * pos_a[1]
+        )
+
+    return abs(area) * 0.5
+
+
+def compute_face_set_area(mesh_data, face_indices, positions):
+    """
+    Return total UV area for a face set using explicit UV positions.
+    """
+
+    total_area = 0.0
+
+    for face_index in face_indices:
+        if face_index < 0:
+            continue
+
+        if face_index >= len(mesh_data.faces):
+            continue
+
+        face_uv_ids = mesh_data.faces[face_index]
+
+        total_area += get_polygon_area_from_position_map(
+            face_uv_ids, positions)
+
+    return total_area
+
+
+def get_position_map_center(uv_ids, positions):
+    """
+    Return average position for UV ids found in positions.
+    """
+
+    points = []
+
+    for uv_id in uv_ids:
+        if uv_id not in positions:
+            continue
+
+        points.append(positions[uv_id])
+
+    if not points:
+        return (0.0, 0.0)
+
+    center_u = sum(
+        point[0]
+        for point in points
+    ) / float(len(points))
+
+    center_v = sum(
+        point[1]
+        for point in points
+    ) / float(len(points))
+
+    return (center_u, center_v)
+
+
+def scale_positions_to_match_source_area(
+    mesh_data,
+    face_indices,
+    source_positions,
+    target_positions
+):
+    """
+    Uniformly scale a solved grid so its total UV area matches the source.
+
+    The target is also centered on the original component center.
+    """
+
+    if not source_positions or not target_positions:
+        return target_positions
+
+    source_area = compute_face_set_area(
+        mesh_data, face_indices, source_positions)
+    target_area = compute_face_set_area(
+        mesh_data, face_indices, target_positions)
+
+    if source_area <= EPSILON:
+        return target_positions
+    if target_area <= EPSILON:
+        return target_positions
+
+    scale = math.sqrt(source_area / target_area)
+    component_uv_ids = sorted(set(target_positions.keys()))
+    source_center = get_position_map_center(component_uv_ids, source_positions)
+    target_center = get_position_map_center(component_uv_ids, target_positions)
+
+    result = {}
+
+    for uv_id, position in target_positions.items():
+        local_position = vector_sub(
+            position,target_center)
+
+        result[uv_id] = vector_add(
+            source_center,
+            vector_mul(local_position, scale)
+        )
+
+    return result
 
 def signed_quad_area(points):
     """
@@ -1019,7 +1118,7 @@ def solve_quad_component_grid_coords(mesh_data, component_face_indices, neighbor
                 side_sign = -1.0
             else:
                 side_sign = 1.0
-
+            """
             side_length = compute_average_side_length(
                 mesh_data,
                 shared_left,
@@ -1027,7 +1126,19 @@ def solve_quad_component_grid_coords(mesh_data, component_face_indices, neighbor
                 outside_left,
                 outside_right
             )
-
+            """
+            # Use fixed logical cell spacing.
+            #
+            # A horizontal shared edge advances one root-cell height.
+            # A vertical shared edge advances one root-cell width.
+            #
+            # This prevents distorted source UV spacing from being copied
+            # into the new rectangular grid.
+            if abs(edge_vector[0]) >= abs(edge_vector[1]):
+                side_length = root_height
+            else:
+                side_length = root_width
+            
             offset = vector_mul(
                 perpendicular,
                 side_length * side_sign
@@ -1382,6 +1493,27 @@ def compute_follow_active_quad_gridified_positions_for_mesh(
     solved_face_count = 0
 
     for component in components:
+        component_source_uv_ids = set()
+
+        for face_index in component:
+            if face_index < 0:
+                continue
+
+            if face_index >= len(mesh_data.faces):
+                continue
+
+            component_source_uv_ids.update(
+                mesh_data.faces[face_index]
+            )
+
+        component_source_positions = {}
+
+        for uv_id in component_source_uv_ids:
+            component_source_positions[uv_id] = get_uv_position(
+                mesh_data,
+                uv_id
+            )
+
         grid_coords, root_face_index, solved_faces = solve_quad_component_grid_coords(
             mesh_data,
             component,
@@ -1406,9 +1538,10 @@ def compute_follow_active_quad_gridified_positions_for_mesh(
             grid_coords.keys()
         )
 
-        mapped_positions = translate_positions_to_match_source_center(
+        mapped_positions = scale_positions_to_match_source_area(
             mesh_data,
-            component_uv_ids,
+            component,
+            component_source_positions,
             mapped_positions
         )
 
